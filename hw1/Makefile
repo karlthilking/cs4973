@@ -5,6 +5,7 @@ all: count ckpt readckpt libckpt.so
 
 count: count.c
 	$(CC) $(CFLAGS) -rdynamic -o $@ $<
+
 ckpt: ckpt.c
 	$(CC) $(CFLAGS) -rdynamic -o $@ $<
 

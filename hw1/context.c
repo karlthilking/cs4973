@@ -4,6 +4,10 @@
 #include <string.h>
 #include <stddef.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <assert.h>
+
+#define CONTEXT_FILE "context.dat"
 
 // RIP: Program Counter
 // RBP: Frame Pointer
@@ -22,39 +26,62 @@ static char *regs[19] = {
 };
 #endif
 
-int print_proc_self_maps()
+void
+print_context_info(ucontext_t *ucp)
 {
-    char sys_call[80];
-    pid_t pid = getpid();
-    sprintf(sys_call, "cat /proc/%d/maps\n", pid);
-    sys_call[79] = '\0';
-    printf("Executing: %s\n", sys_call);
-    return system(sys_call); 
+    int i;
+    for (i = 0; i < NGREG; ++i)
+        printf("%s: %p\n", regs[i], ucp->uc_mcontext.gregs[i]);
+}
+
+int 
+write_context(int fd, ucontext_t *ucp)
+{
+    int rc, tmp;
+    rc = 0;
+    while (rc < sizeof(*ucp)) {
+        if ((tmp = write(fd, (char *)ucp + rc, sizeof(*ucp) - rc)) < 0) {
+            perror("write");
+            return -1;
+        }
+        rc += tmp;
+    }
+    assert(rc == sizeof(*ucp));
+    return 0;
+}
+
+int
+read_context(int fd, ucontext_t *ucp)
+{
+    int rc, tmp;
+    rc = 0;
+    while (rc < sizeof(*ucp)) {
+        if ((tmp = pread(fd, ucp + rc, sizeof(*ucp) - rc, rc)) < 0) {
+            perror("read");
+            return -1;
+        }
+        rc += tmp;
+    }
+    return 0;
 }
 
 int main(int argc, char *argv[])
 {
-    ucontext_t uc;
-    if (getcontext(&uc) == -1) {
-        perror("getcontext");
+    ucontext_t uc1, uc2;
+    getcontext(&uc1);
+    int fd;
+    if ((fd = open(CONTEXT_FILE, O_RDWR | O_CREAT | O_TRUNC,
+                   S_IRUSR | S_IWUSR)) < 0) {
+        perror("open");
         exit(EXIT_FAILURE);
     }
-    if (print_proc_self_maps() == -1) {
-        perror("system");
+    if (write_context(fd, &uc1) < 0) 
         exit(EXIT_FAILURE);
-    }
-#ifdef __x86_64__
-    puts("Architecture: x86_64\n");
-#else
-    puts("Architecture: x86_32\n");
-#endif
-    printf("# General Registers: %d\n", NGREG);
-    printf("uc.uc_stack.ss_sp: %p\n", uc.uc_stack.ss_sp);
-    printf("uc.uc_mcontext.gregs[15]: %p\n", uc.uc_mcontext.gregs[15]);
-    printf("uc.uc_stack.ss_size: %zu\n", (void *)uc.uc_stack.ss_size);
-    printf("stack size: %p\n", (void *)uc.uc_stack.ss_size - (void *)uc.uc_mcontext.gregs[15]);
-    int i;
-    for (i = 0; i < NGREG; ++i)
-        printf("%s: %p\n", regs[i], (void *)uc.uc_mcontext.gregs[i]);
+    if (read_context(fd, &uc2) < 0)
+        exit(EXIT_FAILURE);
+    puts("Context 1:");
+    print_context_info(&uc1);
+    puts("Context 2:");
+    print_context_info(&uc2);
     return EXIT_SUCCESS;
 }

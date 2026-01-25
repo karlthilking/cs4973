@@ -97,11 +97,11 @@ main(int argc, char *argv[])
     int ckpt_fd;
     ckpt_segment_t ckpt_segments[MAX_CKPT_SEGMENTS];
     ucontext_t uc;
-    if ((ckpt_fd = open(CKPT_FILE, O_RDONLY, S_IRUSR)) == -1) {
+    if ((ckpt_fd = open(CKPT_FILE, O_RDONLY)) < 0) {
         perror("open");
         exit(EXIT_FAILURE);
     }
-    if (read_ckpt_file(ckpt_fd, ckpt_segments, &uc) == -1) {
+    if (read_ckpt_file(ckpt_fd, ckpt_segments, &uc) < 0) {
         exit(EXIT_FAILURE);
     }
     print_ckpt_segments(ckpt_segments);

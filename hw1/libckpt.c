@@ -17,6 +17,12 @@
 #define CKPT_SEGMENT_SIZE   sizeof(ckpt_segment_t)
 #define UCONTEXT_SIZE       sizeof(ucontext_t)
 
+enum {
+    VSYSCALL = -1,
+    VDSO     = -2,
+    VVAR     = -3
+};
+
 static char *regs[] = {
     "R8", "R9", "R10", "R11", "R12", "R13", "R14", "R15", "RDI",
     "RSI", "RBP", "RBX", "RDX", "RAX", "RCX", "RSP", "RIP",
@@ -57,6 +63,12 @@ proc_self_maps_line(int proc_maps_fd, ckpt_segment_t *ckpt_segment)
     } else {
         assert(rc == 4);
         ckpt_segment->name[NAME_LEN - 1] = '\0';
+        if (strcmp(ckpt_segment->name, "[vsyscall]") == 0)
+            return VSYSCALL; 
+        else if (strcmp(ckpt_segment->name, "[vdso]") == 0)
+            return VDSO;
+        else if (strcmp(ckpt_segment->name, "[vvar]") == 0)
+            return VVAR;
     }
     ckpt_segment->start = (void *)start;
     ckpt_segment->end = (void *)end;
@@ -73,10 +85,20 @@ proc_self_maps(ckpt_segment_t ckpt_segments[])
         perror("open");
         return -1;
     }
-    i = 0;
-    while (rc != EOF) 
-        rc = proc_self_maps_line(proc_maps_fd, &ckpt_segments[i++]);
+    for (i = 0; rc != EOF; ) {
+        rc = proc_self_maps_line(proc_maps_fd, &ckpt_segments[i]);
+        // if proc_self_maps_line returns a number less than 0
+        // (indicator that is encounterd vsyscall, vdso, or vvar)
+        // reset ckpt_segments[i] and don't increment i in order to 
+        // avoid saving these segments
+        if (rc < 0)
+            memset(&ckpt_segments[i], 0, CKPT_SEGMENT_SIZE);
+        else
+            ++i;
+    }
     close(proc_maps_fd);
+    // i = next valid index in ckpt_segments[] array (for saving
+    // the ucontext_t ckpt_segment)
     return i;
 }
 
@@ -154,8 +176,8 @@ sig_handler(int signum)
             int i;
             if ((i = proc_self_maps(ckpt_segments)) < 0)
                 exit(EXIT_FAILURE);
-            save_context(&ckpt_segments[i - 1]);
-            if (write_ckpt(ckpt_fd, ckpt_segments, &uc) == -1)
+            save_context(&ckpt_segments[i]);
+            if (write_ckpt(ckpt_fd, ckpt_segments, &uc) < 0)
                 exit(EXIT_FAILURE);
             close(ckpt_fd);
             is_restart = 1;

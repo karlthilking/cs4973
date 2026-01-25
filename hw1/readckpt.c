@@ -72,12 +72,16 @@ void
 print_ckpt_segments(ckpt_segment_t ckpt_segments[])
 {
     int i;
-    for (i = 0; ckpt_segments[i].start != NULL; ++i) {
-        printf("%p-%p %c%c%c%c %s %d %zu\n",
+    for (i = 0; ; ++i) {
+        printf("%p-%p %c%c%c%c %s %d %d\n",
                ckpt_segments[i].start, ckpt_segments[i].end,
                ckpt_segments[i].rwxp[0], ckpt_segments[i].rwxp[1],
                ckpt_segments[i].rwxp[2], ckpt_segments[i].rwxp[3],
-               ckpt_segments[i].name);
+               ckpt_segments[i].name, 
+               ckpt_segments[i].is_reg_context,
+               ckpt_segments[i].data_size);
+        if (ckpt_segments[i].is_reg_context)
+            break;
     }
 }
 

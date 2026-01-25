@@ -13,7 +13,6 @@
 #define CKPT_FILE           "ckpt.dat"
 #define BUF_SIZE            1024
 #define MAX_CKPT_SEGMENTS   1000
-#define MAX_CKPT_FILE_SIZE  (1000 * CKPT_SEGMENT_SIZE) + UCONTEXT_SIZE
 #define CKPT_SEGMENT_SIZE   sizeof(ckpt_segment_t)
 #define UCONTEXT_SIZE       sizeof(ucontext_t)
 

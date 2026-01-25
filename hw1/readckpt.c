@@ -1,4 +1,5 @@
 /* readckpt.c */
+#define _GNU_SOURCE
 #include <fcntl.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -12,6 +13,10 @@
 #define CKPT_FILE           "ckpt.dat"
 #define BUF_SIZE            1024
 #define MAX_CKPT_SEGMENTS   1000
+#define MAX_CKPT_FILE_SIZE  128 * 128
+#define CKPT_HEADER_SIZE    sizeof(ckpt_header_t)
+#define CKPT_SEGMENT_SIZE   sizeof(ckpt_segment_t)
+#define UCONTEXT_SIZE       sizeof(ucontext_t)
 
 // ucontext_t contains a field uc_mcontext of type mcontext_t 
 // that contains the general registers in a 'gregset_t' array
@@ -23,67 +28,56 @@ static char *regs[] = {
     "RIP", "EFL", "CSGSFS", "ERR", "TRAPNO", "OLDMASK", "CR2"
 };
 
-struct ckpt_segment {
+typedef struct {
     void *start;
     void *end;
     char rwxp[4];
     char name[NAME_LEN];
     int is_reg_context;
-    size_t data_size;
-};
+    int data_size;
+} ckpt_segment_t;
 
 int
-read_ckpt_file(int ckpt_fd, struct ckpt_segment ckpt_segments[],
-                   ucontext_t *ucp)
+read_ckpt_file(int ckpt_fd, ckpt_segment_t ckpt_segments[], 
+               ucontext_t *ucp)
 {
-    int i, rc, tmp, bytes_read;
-    char data_buf[BUF_SIZE];
-    i = 0;
-    while (1) {
-        memset(data_buf, 0, BUF_SIZE);
+    int rc, tmp, i;
+    for (i = 0; ; ++i) {
         rc = 0;
-        while (rc < sizeof(struct ckpt_segment)) {
-            if ((tmp = pread(ckpt_fd, &ckpt_segments[i] + rc, 
-                             sizeof(struct ckpt_segment) - rc, 
-                             bytes_read + rc)) < 0) {
-                perror("pread");
+        while (rc < CKPT_SEGMENT_SIZE) {
+            if ((tmp = read(ckpt_fd, &ckpt_segments[i] + rc,
+                            CKPT_SEGMENT_SIZE - rc)) < 0) {
+                perror("read");
                 return -1;
             }
             rc += tmp;
         }
-        assert(rc == sizeof(struct ckpt_segment));
-        bytes_read += rc;
-        if (ckpt_segments[i++].is_reg_context == 1) 
+        assert(rc == CKPT_SEGMENT_SIZE);
+        if (ckpt_segments[i].is_reg_context == 1)
             break;
     }
-    memset(data_buf, 0, BUF_SIZE);
     rc = 0;
-    while (rc < sizeof(*ucp)) {
-        if ((tmp = pread(ckpt_fd, ucp + rc, 
-                         sizeof(*ucp) - rc, 
-                         bytes_read + rc)) < 0) {
-            perror("pread");
+    while (rc < UCONTEXT_SIZE) {
+        if ((tmp = read(ckpt_fd, ucp + rc, UCONTEXT_SIZE - rc)) < 0) {
+            perror("read");
             return -1;
         }
         rc += tmp;
     }
-    assert(rc == sizeof(*ucp));
-    bytes_read += rc;
+    assert(rc == UCONTEXT_SIZE);
     return 0;
 }
 
 void
-print_ckpt_segments(struct ckpt_segment ckpt_segments[])
+print_ckpt_segments(ckpt_segment_t ckpt_segments[])
 {
     int i;
-    for (i = 0; ckpt_segments[i].is_reg_context == 1 || 
-                ckpt_segments[i].start != NULL; ++i) {
+    for (i = 0; ckpt_segments[i].start != NULL; ++i) {
         printf("%p-%p %c%c%c%c %s %d %zu\n",
                ckpt_segments[i].start, ckpt_segments[i].end,
                ckpt_segments[i].rwxp[0], ckpt_segments[i].rwxp[1],
                ckpt_segments[i].rwxp[2], ckpt_segments[i].rwxp[3],
-               ckpt_segments[i].name, ckpt_segments[i].is_reg_context,
-               ckpt_segments[i].data_size);
+               ckpt_segments[i].name);
     }
 }
 
@@ -99,7 +93,7 @@ int
 main(int argc, char *argv[])
 {
     int ckpt_fd;
-    struct ckpt_segment ckpt_segments[MAX_CKPT_SEGMENTS];
+    ckpt_segment_t ckpt_segments[MAX_CKPT_SEGMENTS];
     ucontext_t uc;
     if ((ckpt_fd = open(CKPT_FILE, O_RDONLY, S_IRUSR)) == -1) {
         perror("open");
@@ -110,7 +104,6 @@ main(int argc, char *argv[])
     }
     print_ckpt_segments(ckpt_segments);
     print_ucontext_regs(&uc);
-    getcontext(&uc);
-    print_ucontext_regs(&uc);
+    close(ckpt_fd);
     return EXIT_SUCCESS;
 }

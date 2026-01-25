@@ -79,8 +79,7 @@ int
 proc_self_maps(ckpt_segment_t ckpt_segments[])
 {
     int i, rc, proc_maps_fd;
-    if ((proc_maps_fd = open("/proc/self/maps", 
-                             O_RDONLY, S_IRUSR)) == -1) {
+    if ((proc_maps_fd = open("/proc/self/maps", O_RDONLY)) < 0) {
         perror("open");
         return -1;
     }
@@ -114,8 +113,8 @@ save_context(ckpt_segment_t *ckpt_segment)
     return 0;
 }
 
-int write_ckpt(int ckpt_fd, ckpt_segment_t ckpt_segments[], 
-               ucontext_t *ucp)
+int 
+write_ckpt(int ckpt_fd, ckpt_segment_t ckpt_segments[], ucontext_t *ucp)
 {
     int rc, tmp, i;
     for (i = 0; ; ++i) {
@@ -129,7 +128,7 @@ int write_ckpt(int ckpt_fd, ckpt_segment_t ckpt_segments[],
             rc += tmp;
         }
         assert(rc == CKPT_SEGMENT_SIZE);
-        if (ckpt_segments[i].is_reg_context == 1)
+        if (ckpt_segments[i].is_reg_context)
             break;
     }
     rc = 0;
@@ -144,12 +143,43 @@ int write_ckpt(int ckpt_fd, ckpt_segment_t ckpt_segments[],
     return 0;
 }
 
-void
-print_ucontext_regs(ucontext_t *ucp)
+int
+read_ckpt_file(int ckpt_fd, ckpt_segment_t ckpt_segments[], ucontext_t *ucp)
+{
+    int rc, tmp, i;
+    for (i = 0; ; ++i) {
+        rc = 0;
+        while (rc < CKPT_SEGMENT_SIZE) {
+            if ((tmp = read(ckpt_fd, &ckpt_segments[i] + rc,
+                            CKPT_SEGMENT_SIZE - rc)) < 0) {
+                perror("read");
+                return -1;
+            }
+            rc += tmp;
+        }
+        assert(rc == CKPT_SEGMENT_SIZE);
+        if (ckpt_segments[i].is_reg_context)
+            break;
+    }
+    rc = 0;
+    while (rc < UCONTEXT_SIZE) {
+        if ((tmp = read(ckpt_fd, ucp + rc, UCONTEXT_SIZE - rc)) < 0) {
+            perror("read");
+            return -1;
+        }
+        rc += tmp;
+    }
+    assert(rc == UCONTEXT_SIZE);
+    return 0;
+}
+
+int
+restore_memory_segments(ckpt_segment_t ckpt_segments[])
 {
     int i;
-    for (i = 0; i < NGREG; ++i)
-        printf("%s: %p\n", regs[i], ucp->uc_mcontext.gregs[i]);
+    for (i = 0; ckpt_segments[i].start != NULL; ++i) {
+        // TODO (mmap memory segments)
+    }
 }
 
 void 
@@ -163,12 +193,15 @@ sig_handler(int signum)
     if (signum == SIGUSR2) {
         if (is_restart) {
             puts("Restarting...");
+            if ((ckpt_fd = open(CKPT_FILE, O_RDONLY)) < 0) {
+                perror("open");
+                exit(EXIT_FAILURE);
+            }
             is_restart = 0;
         } else {
             puts("Checkpointing...");
-            ckpt_fd = open(CKPT_FILE, O_WRONLY | O_CREAT |
-                           O_TRUNC, S_IWUSR | S_IRUSR);
-            if (ckpt_fd < 0) {
+            if ((ckpt_fd = open(CKPT_FILE, O_WRONLY | O_CREAT |
+                                O_TRUNC, S_IWUSR | S_IRUSR)) < 0) {
                 perror("open");
                 exit(EXIT_FAILURE);
             }

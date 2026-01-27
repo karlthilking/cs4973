@@ -1,4 +1,4 @@
-/* ckpt.c */
+/* restart.c */
 #include <stdlib.h>
 #include <unistd.h>
 #include <stdio.h>
@@ -8,9 +8,9 @@ main(int argc, char *argv[])
 {
     setenv("LD_PRELOAD", "./libckpt.so", 1);
     if (argc < 1) {
-        puts("Usage: ./ckpt <executable>");
+        puts("Usage: ./restart <checkpoint image file>");
         exit(EXIT_FAILURE);
     }
-    execvp(argv[1], &argv[1]);
+    
     return EXIT_SUCCESS;
 }

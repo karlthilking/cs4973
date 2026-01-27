@@ -13,7 +13,7 @@
 #define NAME_LEN            128
 #define CKPT_FILE           "ckpt.dat"
 #define BUF_SIZE            1024
-#define MAX_CKPT_HEADERS   1000
+#define MAX_CKPT_HEADERS    1000
 #define CKPT_HEADER_SIZE    sizeof(ckpt_header_t)
 #define UCONTEXT_SIZE       sizeof(ucontext_t)
 

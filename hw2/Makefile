@@ -30,8 +30,8 @@ check-count: build
 	./restart ckpt.dat & sleep 10
 	pkill -12 --newest restart
 
-check-matrix:
-	./ckpt ./matrix 50000 & sleep 10
+check-matrix: build
+	./ckpt ./matrix 5000 5 & sleep 10
 	pkill -12 --newest matrix & sleep 2
 	./restart ckpt.dat & sleep 10
 	pkill -12 --newest restart

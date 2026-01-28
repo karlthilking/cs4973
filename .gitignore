@@ -1,5 +1,7 @@
 *
 !*.c
 !*.h
+!hw1
+!hw2
 !Makefile
 !README

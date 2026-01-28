@@ -4,6 +4,30 @@ what works:
       with ./readckpt ckpt.dat
     - restarting from a checkpoint image file with ./restart ckpt.dat
 
+brief description of each source file's responsibilities:
+    ckpt.c: 
+        - preloads libckpt.so with setenv("LD_PRELOAD", ...)
+        - calls execvp() to execute the given program
+    libckpt.c:
+        - defines a constructor function to register a signal handler for SIGUSR2
+        - saves all memory segments from /proc/self/maps
+        - saves current context obtained from getcontext()
+        - writes all checkpoint data to a file named "ckpt.dat"
+    readckpt.c:
+        - reads each checkpoint header (defined as ckpt_header_t) from the
+          checkpoint image file
+        - prints out start and end address, permissions, filename, whether or not 
+          it is a context from getcontext(), and data size for each checkpoint
+          header
+        - prints out all general registers that were saved in a ucontext_t
+          after calling getcontext()
+    restart.c
+        - reads every checkpoint header and checkpoint data segment from the
+          checkpoint image file
+        - mmap's all memory segments in the checkpoint image file and restores
+          the corresponding data to each memory segment
+        - calls setcontext() to restore the hardware registers 
+
 makefile usage:
     - make build: builds all executables as well as libckpt.so
     - make clean: removes all executables, libckpt.so and ckpt.dat

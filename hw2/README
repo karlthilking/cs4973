@@ -1,0 +1,16 @@
+what works:
+    - checkpointing a program with ./ckpt <executable>
+    - reading a checkpoint image file (always named ckpt.dat)
+      with ./readckpt ckpt.dat
+    - restarting from a checkpoint image file with ./restart ckpt.dat
+
+makefile usage:
+    - make build: builds all executables as well as libckpt.so
+    - make clean: removes all executables, libckpt.so and ckpt.dat
+    - make check-count: checkpoints and restarts the count program
+    - make check-matrix: checkpoints and restarts the matrix program
+
+note:
+    - make check-count and check-matrix only checkpoint and restart once;
+      to test multiple restarts (which should work) you can repeatedly
+      use ./restart ckpt.dat

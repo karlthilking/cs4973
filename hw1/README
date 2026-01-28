@@ -1,0 +1,33 @@
+what works:
+    - checkpointing a program with ./ckpt <executable>
+    - reading a checkpoint image file with ./readckpt ckpt.dat
+
+brief descriptions:
+    ckpt.c:
+        - preloads libckpt.so with setenv("LD_PRELOAD", ...)
+        - calls execvp() to execute the program passed into argv
+    libckpt.c:
+        - uses a constructor function that registers a signal handler
+          for SIGUSR2
+        - saves info about each segment from /proc/self/maps into an array
+          of structs (ckpt_header_t)
+        - saves a final ckpt_header_t with is_reg_context=1 and 
+          data_size=sizeof(ucontext_t) to head the ucontext_t data
+        - writes each header and data pair to a checkpoint image file
+          (ckpt.dat) in the format HEADER1, DATA1, HEADER2, DATA2, ...;
+          the header is the data of a ckpt_header_t; the data is the data
+          at the memory region between start and end if is_reg_context=0, or 
+          the data of a ucontext_t (from getcontext()) if is_reg_context=1
+    readckpt.c:
+        - reads the info of each ckpt_header_t from the checkpoint image file
+          (named ckpt.dat)
+        - prints the start and end address, permissions (rwxp), filename,
+          value of is_reg_context, and data_size for each checkpoint header
+        - prints the value of each general register saved in the ucontext_t
+          data section of the checkpoint image file (in uc_mcontext.gregs)
+
+makefile usage:
+    - make build: builds all executables and libckpt.so
+    - make clean: removes all executables, libckpt.so and ckpt.dat
+    - make check: checkpoints a program and uses ./readckpt ckpt.dat to
+                  print out information about the checkpointed process

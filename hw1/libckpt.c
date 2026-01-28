@@ -24,7 +24,8 @@
 enum {
     VSYSCALL    = -1,
     VVAR        = -2,
-    GUARD_PAGE  = -3
+    VDSO        = -3,
+    GUARD_PAGE  = -4
 };
 
 typedef struct {
@@ -65,6 +66,8 @@ proc_self_maps_line(int proc_maps_fd, ckpt_header_t *ckpt_header)
             return VSYSCALL; 
         else if (!strcmp(ckpt_header->name, "[vvar]"))
             return VVAR;
+        else if (!strcmp(ckpt_header->name, "[vdso]"))
+            return VDSO;
         else if (ckpt_header->rwxp[0] == '-' && ckpt_header->rwxp[1] == '-' &&
                  ckpt_header->rwxp[2] == '-' && ckpt_header->rwxp[3] == 'p')
             return GUARD_PAGE;
@@ -88,6 +91,7 @@ proc_self_maps(ckpt_header_t ckpt_headers[])
         // one of the following occurences:
         //  - encountered vsyscall memory segment
         //  - encountered vvar memory segment
+        //  - encountered vdso memory segment
         //  - encountered a guard page (permissions = '---p')
         // in these cases, reset the current ckpt_header in order to avoid
         // saving these segments
@@ -169,9 +173,18 @@ sig_handler(int signum)
     is_restart = 0;
     unsigned long fs;
     // avoid *** stack smashing detected ***
-    syscall(SYS_arch_prctl, ARCH_GET_FS, &fs);
-    getcontext(&uc);
-    syscall(SYS_arch_prctl, ARCH_SET_FS, fs);
+    if (syscall(SYS_arch_prctl, ARCH_GET_FS, &fs) < 0) {
+        perror("syscall ARCH_GET_FS");
+        exit(EXIT_FAILURE);
+    }
+    if (getcontext(&uc) < 0) {
+        perror("getcontext");
+        exit(EXIT_FAILURE);
+    }
+    if (syscall(SYS_arch_prctl, ARCH_SET_FS, fs) < 0) {
+        perror("syscall ARCH_SET_FS");
+        exit(EXIT_FAILURE);
+    }
     signal(SIGUSR2, sig_handler2);
     if (is_restart) {
         puts("Restarting...");

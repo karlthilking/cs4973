@@ -1,9 +1,12 @@
 CC = gcc
-CFLAGS = -g3 -O0
+CFLAGS = -g3 -O3
 
-build: count ckpt readckpt libckpt.so restart
+build: count matrix ckpt readckpt libckpt.so
 
 count: count.c
+	$(CC) $(CFLAGS) -rdynamic -o $@ $<
+
+matrix: matrix.c
 	$(CC) $(CFLAGS) -rdynamic -o $@ $<
 
 ckpt: ckpt.c
@@ -15,20 +18,12 @@ readckpt: readckpt.c
 libckpt.so: libckpt.c
 	$(CC) $(CFLAGS) -shared -fPIC -o $@ $<
 
-restart: restart.c 
-	$(CC) $(CFLAGS) -static \
-		-Wl,-Ttext-segment=5000000 \
-		-Wl,-Tdata=5100000 \
-		-Wl,-Tbss=5200000 -o $@ $< 
-
-check:
-	./ckpt ./count & sleep 10
-	pkill -12 --newest count
-	./restart ckpt.dat & sleep 10
-	pkill -12 --newest restart
+check: build
+	./ckpt ./matrix 50000 8 & sleep 8
+	pkill -12 --newest matrix
+	./readckpt ckpt.dat
 
 clean:
-	rm -f count ckpt readckpt libckpt.so ckpt.dat
-    
+	rm -f count matrix ckpt readckpt libckpt.so ckpt.dat
     
     

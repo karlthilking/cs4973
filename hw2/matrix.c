@@ -5,38 +5,30 @@
 #include <string.h>
 #include <time.h>
 
-static int w = 0, h = 0;
+static int interval, w;
 
 void
-display_matrix(int matrix[w][h])
+display_matrix(int matrix[w * w])
 {
-    puts("Matrix:");
-    for (int i = 0; i < h; ++i) {
-        for (int j = 0; j < w; ++j) {
-            printf("%-5d", matrix[i][j]);
-        }
-        printf("\n\n");
+    for (int i = 0; i < w; ++i) {
+        for (int j = 0; j < w; ++j)
+            printf("%-5d", matrix[i * w + j]);
+        putchar('\n');
     }
 }
 
 int
 main(int argc, char* argv[])
 {
-    if (argc < 2) {
-        puts("Usage: ./matrix <interval length (us)> <matrix width/height>");
-        exit(EXIT_FAILURE);
-    }
-    int interval = atoi(argv[1]);
-    w = h = atoi(argv[2]);
-    int matrix[w][h];
+    interval = (argc > 1) ? atoi(argv[1]) : 10000;
+    w = (argc > 2) ? atoi(argv[2]) : 5;
+    int matrix[w * w];
     memset(&matrix, 0, sizeof(matrix));
-    for (int i = 0; i < h; i = ++i % h) {
-        for (int j = 0; j < w; ++j) {
-            system("clear");
-            ++matrix[i][j];
-            display_matrix(matrix);
-            usleep(interval);
-        }
+    for (int i = 0; ; i = ++i % (w * w)) {
+        system("clear");
+        ++matrix[i];
+        display_matrix(matrix);
+        usleep(interval);
     }
     exit(EXIT_SUCCESS);
 }

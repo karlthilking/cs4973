@@ -8,6 +8,7 @@
 #include <sys/mman.h>
 #include <assert.h>
 #include <errno.h>
+#include <sys/auxv.h>
 
 #define NAME_LEN            128
 #define MAX_CKPT_HEADERS    1000
@@ -137,6 +138,12 @@ main(int argc, char *argv[])
     }
     if (read_ckpt(ckpt_fd, ckpt_headers, &uc) < 0)
         exit(EXIT_FAILURE);
-    setcontext(&uc);
+    // a successful call to setcontext should not return because
+    // it should start executing from where getcontext was called
+    // when the original context was saved
+    if (setcontext(&uc) < 0) {
+        perror("setcontext");
+        exit(EXIT_FAILURE);
+    }
     exit(EXIT_SUCCESS);
 }

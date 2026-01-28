@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -g3 -O0
+CFLAGS = -g3 -O3
 
 build: count matrix ckpt readckpt libckpt.so restart
 
@@ -24,15 +24,9 @@ restart: restart.c
 		-Wl,-Tdata=5100000 \
 		-Wl,-Tbss=5200000 -o $@ $< 
 
-check-count: build
-	./ckpt ./count & sleep 10
-	pkill -12 --newest count & sleep 2
-	./restart ckpt.dat & sleep 10
-	pkill -12 --newest restart
-
-check-matrix: build
-	./ckpt ./matrix 5000 5 & sleep 10
-	pkill -12 --newest matrix & sleep 2
+check: build
+	./ckpt ./matrix 50000 8 & sleep 10
+	pkill -12 --newest matrix & sleep 4
 	./restart ckpt.dat & sleep 10
 	pkill -12 --newest restart
 

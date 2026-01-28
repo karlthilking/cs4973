@@ -11,6 +11,9 @@ main(int argc, char *argv[])
         puts("Usage: ./ckpt <executable>");
         exit(EXIT_FAILURE);
     }
-    execvp(argv[1], &argv[1]);
-    return EXIT_SUCCESS;
+    if (execvp(argv[1], &argv[1]) < 0) {
+        perror("execvp");
+        exit(EXIT_FAILURE);
+    }
+    exit(EXIT_SUCCESS);
 }

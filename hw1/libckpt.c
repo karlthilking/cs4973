@@ -1,32 +1,29 @@
 /* libckpt.c */
 #define _GNU_SOURCE
-#include <ucontext.h>
-#include <signal.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <fcntl.h>
-#include <assert.h>
-#include <unistd.h>
-#include <sys/mman.h>
+#include <ucontext.h>  
+#include <signal.h>     
+#include <stdio.h>      
+#include <stdlib.h>    
+#include <string.h>     
+#include <fcntl.h>      
+#include <assert.h>     
+#include <unistd.h>    
+#include <sys/mman.h>   
+#include <asm/prctl.h>
+#include <sys/syscall.h>
 
 #define NAME_LEN            128
 #define CKPT_FILE           "ckpt.dat"
-#define BUF_SIZE            1024
 #define MAX_CKPT_HEADERS    1000
 #define CKPT_HEADER_SIZE    sizeof(ckpt_header_t)
 #define UCONTEXT_SIZE       sizeof(ucontext_t)
 
+// error codes for handling /proc/self/maps segments
+// that should not be saved
 enum {
     VSYSCALL   = -1,
     VVAR       = -2,
     GUARD_PAGE = -3
-};
-
-static char *regs[] = {
-    "R8", "R9", "R10", "R11", "R12", "R13", "R14", "R15", "RDI",
-    "RSI", "RBP", "RBX", "RDX", "RAX", "RCX", "RSP", "RIP",
-    "EFL", "CSGSFS", "ERR", "TRAPNO", "OLDMASK", "CR2"
 };
 
 typedef struct {
@@ -37,52 +34,6 @@ typedef struct {
     int is_reg_context;
     int data_size;
 } ckpt_header_t;
-
-#ifdef DEBUG
-// print original /proc/self/maps for debugging
-void
-print_proc_self_maps()
-{
-    char buf[128];
-    snprintf(buf, 127, "cat /proc/%d/maps", getpid());
-    buf[127] = '\0';
-    system(buf);
-}
-
-// print ucontext_regs to compare to what is read from the ckpt image file
-void
-print_ucontext_regs(ucontext_t *ucp)
-{
-    for (int i = 0; i < NGREG; ++i)
-        printf("%s: %p\n", regs[i], ucp->uc_mcontext.gregs[i]);
-}
-
-// print expected ckpt.dat file size to compare to the actual file size
-void
-print_ckpt_file_size(ckpt_header_t ckpt_headers[])
-{
-    int ckpt_fd, expected_size, lseek_size;
-    if ((ckpt_fd = open(CKPT_FILE, O_RDONLY)) < 0) {
-        perror("open");
-        goto fail;
-    }
-    expected_size = 0;
-    for (int i = 0; ckpt_headers[i].is_reg_context == 0; ++i)
-        expected_size += CKPT_HEADER_SIZE + ckpt_headers[i].data_size;
-    expected_size += CKPT_HEADER_SIZE + UCONTEXT_SIZE;
-    if ((lseek_size = lseek(ckpt_fd, 0, SEEK_END)) < 0) {
-        perror("lseek");
-        goto fail;
-    }
-    goto success;
-    success:
-        printf("Expected file size: %d\n, Lseek total offset: %d\n",
-                expected_size, lseek_size);
-        close(ckpt_fd);
-    fail:
-        close(ckpt_fd);
-}
-#endif
 
 int 
 proc_self_maps_line(int proc_maps_fd, ckpt_header_t *ckpt_header)
@@ -203,88 +154,30 @@ write_ckpt(int ckpt_fd, ckpt_header_t ckpt_headers[], ucontext_t *ucp)
     return 0;
 }
 
-int
-restore_memory(int ckpt_fd, ckpt_header_t *ckpt_header)
-{
-    size_t len;
-    int prot, flags, rc, tmp;
-    void *addr;
-    prot = PROT_READ | PROT_WRITE | PROT_EXEC;
-    flags = MAP_FIXED | MAP_ANONYMOUS;
-    flags |= (ckpt_header->rwxp[3] == 'p') ? MAP_PRIVATE : MAP_SHARED;
-    flags |= (!strcmp(ckpt_header->name, "[stack]")) ? MAP_GROWSDOWN : 0;
-    len = (size_t)ckpt_header->data_size;
-    if ((addr = mmap(ckpt_header->start, len, 
-                     prot, flags, -1, 0)) == MAP_FAILED) {
-        perror("mmap");
-        return -1;
-    }
-    rc = 0;
-    while (rc < ckpt_header->data_size) {
-        if ((tmp = read(ckpt_fd, addr + rc, len - rc)) < 0) {
-            perror("read");
-            return -1;
-        }
-        rc += tmp;
-    }
-    assert(rc == ckpt_header->data_size);
-    return 0;
-}
+void sig_handler2(int);
 
-int
-read_ckpt(int ckpt_fd, ckpt_header_t ckpt_headers[], ucontext_t *ucp)
-{
-    int rc, tmp, i;
-    for (i = 0; ; ++i) {
-        rc = 0;
-        while (rc < CKPT_HEADER_SIZE) {
-            if ((tmp = read(ckpt_fd, &ckpt_headers[i] + rc,
-                            CKPT_HEADER_SIZE - rc)) < 0) {
-                perror("read");
-                return -1;
-            }
-            rc += tmp;
-        }
-        assert(rc == CKPT_HEADER_SIZE);
-        if (ckpt_headers[i].is_reg_context)
-            break;
-        if (restore_memory(ckpt_fd, &ckpt_headers[i]) < 0)
-            return -1;
-    }
-    rc = 0;
-    while (rc < UCONTEXT_SIZE) {
-        if ((tmp = read(ckpt_fd, ucp + rc, UCONTEXT_SIZE - rc)) < 0) {
-            perror("read");
-            return -1;
-        }
-        rc += tmp;
-    }
-    assert(rc == UCONTEXT_SIZE);
-    return 0;
-}
-
-void 
+void
 sig_handler(int signum)
 {
+    static int is_restart;
     ucontext_t uc;
+    is_restart = 0;
+    unsigned long fs;
+    syscall(SYS_arch_prctl, ARCH_GET_FS, &fs);
     getcontext(&uc);
-    static int is_restart = 0;
-    ckpt_header_t ckpt_headers[MAX_CKPT_HEADERS];
-    int ckpt_fd;
+    syscall(SYS_arch_prctl, ARCH_SET_FS, fs);
+    signal(SIGUSR2, sig_handler2);
     if (is_restart) {
         puts("Restarting...");
-        if ((ckpt_fd = open(CKPT_FILE, O_RDONLY)) < 0) {
-            perror("open");
-            exit(EXIT_FAILURE);
-        }
-        if (read_ckpt(ckpt_fd, ckpt_headers, &uc) < 0)
-            exit(EXIT_FAILURE);
-        close(ckpt_fd);
         is_restart = 0;
+        return;
     } else {
         puts("Checkpointing...");
+        is_restart = 1;
+        int ckpt_fd;
+        ckpt_header_t ckpt_headers[MAX_CKPT_HEADERS];
         if ((ckpt_fd = open(CKPT_FILE, O_WRONLY | O_CREAT | O_TRUNC,
-                            S_IWUSR | S_IRUSR)) < 0) {
+                            S_IRUSR | S_IWUSR)) < 0) {
             perror("open");
             exit(EXIT_FAILURE);
         }
@@ -294,14 +187,14 @@ sig_handler(int signum)
         save_context(&ckpt_headers[i]);
         if (write_ckpt(ckpt_fd, ckpt_headers, &uc) < 0)
             exit(EXIT_FAILURE);
-        close(ckpt_fd);
-        is_restart = 1;
-        #ifdef DEBUG
-            print_proc_self_maps();
-            print_ucontext_regs(&uc);
-            print_ckpt_file_size(ckpt_headers);
-        #endif
+        exit(EXIT_SUCCESS);
     }
+}
+
+void
+sig_handler2(int signum)
+{
+    sig_handler(signum);
 }
 
 void

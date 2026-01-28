@@ -10,7 +10,7 @@ main(int argc, char *argv[])
     while (start <= INT_MAX) {
         printf("%d ", start++);
         fflush(stdout);
-        sleep(2);
+        sleep(1);
     }
     return EXIT_SUCCESS;
 }

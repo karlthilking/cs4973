@@ -47,6 +47,8 @@ restore_segment(int ckpt_fd, ckpt_header_t *ckpt_header)
         prot |= PROT_GROWSDOWN;
         flags |= MAP_GROWSDOWN;
     }
+    // any name starting with [ should not be backed by any file
+    // eg. [stack], [heap], [vdso], etc
     if (!strcmp(ckpt_header->name, "ANONYMOUS_SEGMENT") ||
         ckpt_header->name[0] == '[') {
         flags |= MAP_ANONYMOUS;

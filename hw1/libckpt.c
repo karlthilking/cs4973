@@ -133,7 +133,7 @@ write_ckpt(int ckpt_fd, ckpt_header_t ckpt_headers[], ucontext_t *ucp)
         // the ckpt image file format always include the ucontext_t
         // data at the very end so when is_reg_context is nonzero (true)
         // the only thing left to do is break from the loop and read the
-        // remaining data in a struct ucontext_t
+        // remaining data to the ucontext_t variable
         if (ckpt_headers[i].is_reg_context)
             break;
         rc = 0;

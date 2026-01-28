@@ -24,7 +24,12 @@ typedef struct {
     int data_size;
 } ckpt_header_t;
 
-static char *regs[] = {
+// ordering of general registers in the 'gregset_t' array
+// in the struct mcontext_t which is contained in the struct
+// ucontext_t (as uc_mcontext) from glibc in
+// sysdeps/x86_64/sys/ucontext.h; NGREG is the number of 
+// general registers in the 'gregset_t' array
+static char *regs[NGREG] = {
     "R8", "R9", "R10", "R11", "R12", "R13", "R14", "R15",
     "RDI", "RSI", "RBP", "RBX", "RDX", "RAX", "RCX", "RSP",
     "RIP", "EFL", "CSGSFS", "ERR", "TRAPNO", "OLDMASK", "CR2"
@@ -85,10 +90,8 @@ print_ckpt_headers(ckpt_header_t ckpt_headers[])
 void
 print_ucontext_regs(ucontext_t *ucp) 
 {
-    // NGREG: number of general registers as defined in ucontext.h
-    for (int i = 0; i < NGREG; ++i) {
+    for (int i = 0; i < NGREG; ++i)
         printf("%-12s%p\n", regs[i], ucp->uc_mcontext.gregs[i]);
-    }
 }
 
 int

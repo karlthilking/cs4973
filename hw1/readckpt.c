@@ -10,15 +10,10 @@
 #include <ucontext.h>
 
 #define NAME_LEN            128
+#define CKPT_FILE           "ckpt.dat"
 #define MAX_CKPT_HEADERS    1000
 #define CKPT_HEADER_SIZE    sizeof(ckpt_header_t)
 #define UCONTEXT_SIZE       sizeof(ucontext_t)
-
-static char *regs[] = {
-    "R8", "R9", "R10", "R11", "R12", "R13", "R14", "R15",
-    "RDI", "RSI", "RBP", "RBX", "RDX", "RAX", "RCX", "RSP",
-    "RIP", "EFL", "CSGSFS", "ERR", "TRAPNO", "OLDMASK", "CR2"
-};
 
 typedef struct {
     void *start;
@@ -28,6 +23,12 @@ typedef struct {
     int is_reg_context;
     int data_size;
 } ckpt_header_t;
+
+static char *regs[] = {
+    "R8", "R9", "R10", "R11", "R12", "R13", "R14", "R15",
+    "RDI", "RSI", "RBP", "RBX", "RDX", "RAX", "RCX", "RSP",
+    "RIP", "EFL", "CSGSFS", "ERR", "TRAPNO", "OLDMASK", "CR2"
+};
 
 int
 read_ckpt(int ckpt_fd, ckpt_header_t ckpt_headers[], ucontext_t *ucp)

@@ -18,12 +18,13 @@
 #define CKPT_HEADER_SIZE    sizeof(ckpt_header_t)
 #define UCONTEXT_SIZE       sizeof(ucontext_t)
 
-// error codes for handling /proc/self/maps segments
-// that should not be saved
+// distinguishable error codes to use for indicating the encounter of
+// any special memory segments in /proc/self/maps that should not
+// be saved
 enum {
-    VSYSCALL   = -1,
-    VVAR       = -2,
-    GUARD_PAGE = -3
+    VSYSCALL    = -1,
+    VVAR        = -2,
+    GUARD_PAGE  = -3
 };
 
 typedef struct {
@@ -129,6 +130,10 @@ write_ckpt(int ckpt_fd, ckpt_header_t ckpt_headers[], ucontext_t *ucp)
             rc += tmp;
         }
         assert(rc == CKPT_HEADER_SIZE);
+        // the ckpt image file format always include the ucontext_t
+        // data at the very end so when is_reg_context is nonzero (true)
+        // the only thing left to do is break from the loop and read the
+        // remaining data in a struct ucontext_t
         if (ckpt_headers[i].is_reg_context)
             break;
         rc = 0;
@@ -163,6 +168,7 @@ sig_handler(int signum)
     ucontext_t uc;
     is_restart = 0;
     unsigned long fs;
+    // avoid *** stack smashing detected ***
     syscall(SYS_arch_prctl, ARCH_GET_FS, &fs);
     getcontext(&uc);
     syscall(SYS_arch_prctl, ARCH_SET_FS, fs);

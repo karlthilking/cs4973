@@ -53,10 +53,12 @@ restore_segment(int ckpt_fd, ckpt_header_t *ckpt_header)
         fd = -1;
     } else {
         if ((fd = open(ckpt_header->name, O_RDONLY)) < 0) {
-            fprintf(stderr, "open: %s, filename: %s", strerror(errno), ckpt_header->name);
+            fprintf(stderr, "open: %s, filename: %s", 
+                    strerror(errno), ckpt_header->name);
             return -1;
         }
     }
+    // mmap segment giving it full permissions temporarily
     if ((addr = mmap(ckpt_header->start, len, PROT_READ | PROT_WRITE |
                      PROT_EXEC, flags, fd, 0)) == MAP_FAILED) {
         perror("mmap");
@@ -72,6 +74,8 @@ restore_segment(int ckpt_fd, ckpt_header_t *ckpt_header)
         rc += tmp;
     }
     assert(rc == ckpt_header->data_size);
+    // reset mmap'ed segment permissions to reflect the permissions
+    // specified by rwxp in the ckpt_header
     if (mprotect(ckpt_header->start, len, prot) < 0) {
         perror("mprotect");
         return -1;
@@ -123,6 +127,7 @@ main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
     ckpt_file = argv[1];
+    // recursive function with 1000 iterations to grow stack
     recursive(1000);
     if ((ckpt_fd = open(ckpt_file, O_RDONLY)) < 0) {
         perror("open");

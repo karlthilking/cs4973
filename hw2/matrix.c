@@ -3,6 +3,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 void
 display_matrix(int matrix[5][5])
@@ -26,13 +27,12 @@ main(int argc, char* argv[])
     int interval = atoi(argv[1]);
     int matrix[5][5];
     memset(&matrix, 0, sizeof(matrix));
-    system("clear");
     for (int i = 0; i < 5; i = ++i % 5) {
-        for (int j = 0; j < 5; j == ++j % 5) {
+        for (int j = 0; j < 5; ++j) {
+            system("clear");
             ++matrix[i][j];
             display_matrix(matrix);
             usleep(interval);
-            system("clear");
         }
     }
     exit(EXIT_SUCCESS);

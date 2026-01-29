@@ -34,4 +34,3 @@ clean:
 	rm -f count matrix ckpt readckpt restart libckpt.so ckpt.dat
     
     
-    

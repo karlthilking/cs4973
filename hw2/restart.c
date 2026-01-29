@@ -9,6 +9,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <sys/auxv.h>
+#include <signal.h>
 
 #define NAME_LEN            128
 #define MAX_CKPT_HEADERS    1000
@@ -64,7 +65,8 @@ restore_segment(int ckpt_fd, ckpt_header_t *ckpt_header)
     // mmap segment giving it full permissions temporarily
     if ((addr = mmap(ckpt_header->start, len, PROT_READ | PROT_WRITE |
                      PROT_EXEC, flags, fd, 0)) == MAP_FAILED) {
-        perror("mmap");
+        fprintf(stderr, "mmap: %s, filename: %s\n", 
+                strerror(errno), ckpt_header->name);
         return -1;
     }
     rc = 0;

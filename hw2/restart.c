@@ -45,6 +45,10 @@ restore_segment(int ckpt_fd, ckpt_header_t *ckpt_header)
     prot |= (ckpt_header->rwxp[2] == 'x') ? PROT_EXEC : PROT_NONE;
     flags = MAP_FIXED;
     flags |= (ckpt_header->rwxp[3] == 'p') ? MAP_PRIVATE : MAP_SHARED;
+    // there seems to be a permission issue with mapping shared memory
+    // segments; just skip them for now
+    if (flags & MAP_SHARED)
+        return 0;
     if (!strcmp(ckpt_header->name, "[stack]")) {
         prot |= PROT_GROWSDOWN;
         flags |= MAP_GROWSDOWN;

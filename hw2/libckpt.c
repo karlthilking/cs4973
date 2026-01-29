@@ -11,6 +11,7 @@
 #include <sys/mman.h>   
 #ifdef __x86_64
 #   include <asm/prctl.h>
+#   include <sys/prctl.h>
 #endif
 #include <sys/syscall.h>
 
@@ -176,7 +177,7 @@ sig_handler(int signum)
     unsigned long fs;
     // avoid *** stack smashing detected ***
 #ifdef __x86_64
-    if (arch_prctl(ARCH_GET_FS, &fs) < 0) {
+    if (syscall(SYS_arch_prctl, ARCH_GET_FS, &fs) < 0) {
         perror("ARCH_GET_FS");
         exit(EXIT_FAILURE);
     }
@@ -186,7 +187,7 @@ sig_handler(int signum)
         exit(EXIT_FAILURE);
     }
 #ifdef __x86_64
-    if (arch_prctl(ARCH_SET_FS, fs) < 0) {
+    if (syscall(SYS_arch_prctl, ARCH_SET_FS, fs) < 0) {
         perror("ARCH_SET_FS");
         exit(EXIT_FAILURE);
     }

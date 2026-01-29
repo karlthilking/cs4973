@@ -32,7 +32,7 @@ static char *regs[NUM_REGS] = {
     "RDI", "RSI", "RBP", "RBX", "RDX", "RAX", "RCX", "RSP",
     "RIP", "EFL", "CSGSFS", "ERR", "TRAPNO", "OLDMASK", "CR2"
 };
-#elif defined(__aarch64__)
+#elif defined __aarch64__
 #   define NUM_REGS     31
 #   define CPU          "aarch64"
 static char *regs[NUM_REGS] = {
@@ -109,11 +109,11 @@ print_ucontext_regs(ucontext_t *ucp)
     for (int i = 0; i < NUM_REGS; ++i) {
         if ((void *)ucp->uc_mcontext.gregs[i] == NULL)
             continue;
-        printf("%s: %p\n", regs[i], ucp->uc_mcontext.gregs[i]);
+        printf("%s: %p\n", regs[i], (void *)ucp->uc_mcontext.gregs[i]);
     }
-#elif define(__aarch64__)
-    printf("$sp: %p\n", ucp->uc_mcontext.sp);
-    printf("$pc: %p\n", ucp->uc_mcontext.pc);
+#elif defined __aarch64__
+    printf("$sp: %p\n", (void *)ucp->uc_mcontext.sp);
+    printf("$pc: %p\n", (void *)ucp->uc_mcontext.pc);
     for (int i = 0; i < NUM_REGS; ++i) {
         if ((void *)ucp->uc_mcontext.regs[i] == NULL)
             continue;

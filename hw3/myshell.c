@@ -483,6 +483,8 @@ spawn_child_background(char *argv[])
             perror("fork");
             goto fail;
         case 0:
+            printf("%d\n$ ", getpid());
+            fflush(stdout);
             if (execvp(argv[0], &argv[0]) < 0) {
                 fprintf(stderr, "execvp (%s): %s\n", argv[0], strerror(errno));
                 exit(EXIT_FAILURE);
@@ -507,6 +509,8 @@ spawn_one_background(char *argv1[], char *argv2[])
             perror("fork");
             goto fail;
         case 0:
+            printf("%d\n$ ", getpid());
+            fflush(stdout);
             if (execvp(argv1[0], &argv1[0]) < 0) {
                 fprintf(stderr, "execvp (%s): %s\n", argv1[0], strerror(errno));
                 exit(EXIT_FAILURE);

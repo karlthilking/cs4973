@@ -217,8 +217,8 @@ spawn_child(char *argv[])
                 perror("waitpid");
                 goto fail;
             }
+            goto success;
     }
-    goto success;
     success:
         pids[0] = 0;
         free_argv(argv);
@@ -261,8 +261,8 @@ spawn_child_out_redirect(char *argv[], char *filename)
                 perror("waitpid");
                 goto fail;
             }
+            goto success;
     }
-    goto success;
     success:
         pids[0] = 0;
         free_argv(argv);
@@ -279,7 +279,44 @@ spawn_child_out_redirect(char *argv[], char *filename)
 int
 spawn_child_in_redirect(char *argv[], char *filename)
 {
-    ;
+    int fd;
+    if ((fd = open(filename, O_RDONLY)) < 0) {
+        perror("open");
+        goto fail;
+    }
+    pids[0] = fork();
+    switch (pids[0]) {
+        case -1:
+            perror("fork");
+            goto fail;
+        case 0:
+            if (close(STDIN_FILENO) < 0) {
+                perror("close");
+                exit(EXIT_FAILURE);
+            }
+            dup2(fd, STDIN_FILENO);
+            if (execvp(argv[0], &argv[0]) < 0) {
+                perror("execvp");
+                exit(EXIT_FAILURE);
+            }
+        default:
+            if (waitpid(pids[0], NULL, 0) < 0) {
+                perror("waitpid");
+                goto fail;
+            }
+            goto success;
+    }
+    success:
+        pids[0] = 0;
+        free_argv(argv);
+        close(fd);
+        return 0;
+    fail:
+        pids[0] = 0;
+        free_argv(argv);
+        if (fd != -1)
+            close(fd);
+        return -1;
 }
 
 int
@@ -431,8 +468,12 @@ main()
             if (spawn_child_out_redirect(argv, filename) < 0)
                 exit(EXIT_FAILURE);
         } else if (has_in_redirect(buf)) {
-            puts("commands with input redirection can not be handled");
-            continue;
+            char *argv[MAXARGS];
+            char filename[BUFSIZE];
+            if (parse_argv_redirect(buf, argv, filename) < 0)
+                exit(EXIT_FAILURE);
+            if (spawn_child_in_redirect(argv, filename) < 0)
+                exit(EXIT_FAILURE);
         } else if (has_background(buf)) {
             char *argv[MAXARGS];
             if (parse_argv_background(buf, argv) < 0)

@@ -22,15 +22,11 @@ void
 sig_handler(int signum)
 {
     assert(signum == SIGINT);
-    // if there are no pids currently in use then the interrupt
-    // is directed to the shell itself
-    if (!(pids[0] || pids[1]))
-        exit(EXIT_SUCCESS);
-    // if getpid() returns a value equal to pids[0] or pids[1] then 
-    // this is a child process and thus should exit
-    if (getpid() == pids[0] || getpid() == pids[1])
+    if (pids[0] == getpid() || pids[1] == getpid())
         exit(EXIT_SUCCESS);
     printf("\n");
+    if (!(pids[0] || pids[1]))
+        return;
     return;
 }
 
@@ -467,51 +463,61 @@ spawn_children_pipe(char *argv1[], char *argv2[])
 }
 
 int
-main()
+main_loop()
 {
-    signal(SIGINT, sig_handler);
     while (1) {
         char buf[BUFSIZE];
         printf("$ ");
         fflush(stdout);
         if (fgets(buf, BUFSIZE, stdin) == NULL && feof(stdin)) {
             fprintf(stderr, "Failed to read from stdin: %s\n", strerror(errno));
-            exit(EXIT_FAILURE);
+            goto fail;
         }
         if (has_pipe(buf)) {
             char *argv1[MAXARGS];
             char *argv2[MAXARGS];
             if (parse_argv_pipe(buf, argv1, argv2) < 0)
-                exit(EXIT_FAILURE);
-            if (spawn_children_pipe(argv1, argv2) < 0) 
-                exit(EXIT_FAILURE);
+                goto fail;
+            if (spawn_children_pipe(argv1, argv2) < 0)
+                goto fail;
         } else if (has_out_redirect(buf)) {
             char *argv[MAXARGS];
             char filename[BUFSIZE];
             if (parse_argv_redirect(buf, argv, filename) < 0)
-                exit(EXIT_FAILURE);
+                goto fail;
             if (spawn_child_out_redirect(argv, filename) < 0)
-                exit(EXIT_FAILURE);
+                goto fail;
         } else if (has_in_redirect(buf)) {
             char *argv[MAXARGS];
             char filename[BUFSIZE];
             if (parse_argv_redirect(buf, argv, filename) < 0)
-                exit(EXIT_FAILURE);
+                goto fail;
             if (spawn_child_in_redirect(argv, filename) < 0)
-                exit(EXIT_FAILURE);
+                goto fail;
         } else if (has_background(buf)) {
             char *argv[MAXARGS];
             if (parse_argv_background(buf, argv) < 0)
-                exit(EXIT_FAILURE);
+                goto fail;
             if (spawn_child_background(argv) < 0)
-                exit(EXIT_FAILURE);
-        } else { 
+                goto fail;
+        } else {
             char *argv[MAXARGS];
             if (parse_argv(buf, argv) < 0)
-                exit(EXIT_FAILURE);
+                goto fail;
             if (spawn_child(argv) < 0)
-                exit(EXIT_FAILURE);
+                goto fail;
         }
     }
+    fail:
+        return -1;
+    return 0;
+}
+
+int
+main()
+{
+    signal(SIGINT, sig_handler);
+    if (main_loop() < 0) 
+        exit(EXIT_FAILURE);
     exit(EXIT_SUCCESS);
 }

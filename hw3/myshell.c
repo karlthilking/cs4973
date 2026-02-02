@@ -58,12 +58,36 @@ has_in_redirect(char *buf)
 
 // e.g. sleep 10 &
 int
-has_background(char *buf)
+has_only_background(char *buf)
 {
-    if (strstr(buf, " &") == NULL)
+    char *substr;
+    if ((substr = strstr(buf, " &")) == NULL)
         return 0;
+    int n = strlen(buf);
+    if (substr[2] == '\n' || substr[2] == '\0')
+        return 1;
+    for (int ix = 2; ix < n; ++ix)
+        if (substr[ix] != ' ')
+            return 0;
     return 1;
 }
+
+// e.g. sleep 10 & wc tmp.txt
+int
+has_one_background(char *buf)
+{
+    char *substr;
+    if ((substr = strstr(buf, " & ")) == NULL)
+        return 0;
+    int n = strlen(substr);
+    if (substr[2] == '\n' || substr[2] == '\0')
+        return 0;
+    for (int ix = 2; ix < n; ++ix)
+        if (substr[ix] != ' ')
+            return 1;
+    return 0;
+}
+
 
 #ifdef DEBUG
 void
@@ -202,7 +226,7 @@ parse_argv_redirect(char *buf, char *argv[], char *filename)
 }
 
 int
-parse_argv_background(char *buf, char *argv[])
+parse_argv_only_background(char *buf, char *argv[])
 {
     int prev = 0, argc = 0, n = strlen(buf);
     for (int ix = 0; ix < n;) {
@@ -221,6 +245,54 @@ parse_argv_background(char *buf, char *argv[])
         }
         ++ix;
     }
+    return 0;
+}
+
+int
+parse_argv_one_background(char *buf, char *argv1[], char *argv2[])
+{
+    int ix, prev = 0, argc1 = 0, argc2 = 0, n = strlen(buf);
+    for (ix = 0; ix < n;) {
+        if (buf[ix] == '&') {
+            argv1[argc1] = NULL;
+            while (buf[++ix] == ' ')
+                ;
+            prev = ix;
+            break;
+        } else if (buf[ix] == ' ') {
+            if ((argv1[argc1++] = strndup(&buf[prev], ix - prev)) == NULL) {
+                perror("strndup");
+                return -1;
+            }
+            while (buf[++ix] == ' ')
+                ;
+            prev = ix;
+            continue;
+        }
+        ++ix;
+    }
+    for (; ix < n;) {
+        if (buf[ix] == '\n') {
+            buf[ix] = '\0';
+            break;
+        } else if (buf[ix] == ' ') {
+            if ((argv2[argc2++] = strndup(&buf[prev], ix - prev)) == NULL) {
+                perror("strndup");
+                return -1;
+            }
+            while (buf[++ix] == ' ')
+                ;
+            prev = ix;
+        }
+        ++ix;
+    }
+    if (prev != ix) {
+        if ((argv2[argc2++] = strndup(&buf[prev], n - prev)) == NULL) {
+            perror("strndup");
+            return -1;
+        }
+    }
+    argv2[argc2] = NULL;
     return 0;
 }
 
@@ -347,6 +419,9 @@ spawn_child_in_redirect(char *argv[], char *filename)
 int
 spawn_child_background(char *argv[])
 {
+#ifdef DEBUG
+    print_argv(argv);
+#endif
     switch (fork()) {
         case -1:
             perror("fork");
@@ -364,6 +439,52 @@ spawn_child_background(char *argv[])
         return 0;
     fail:
         free_argv(argv);
+        return -1;
+}
+
+int
+spawn_one_background(char *argv1[], char *argv2[])
+{
+    // background process
+    switch (fork()) {
+        case -1:
+            perror("fork");
+            goto fail;
+        case 0:
+            if (execvp(argv1[0], &argv1[0]) < 0) {
+                fprintf(stderr, "execvp (%s): %s\n", argv1[0], strerror(errno));
+                exit(EXIT_FAILURE);
+            }
+        default:
+            break;
+    }
+    // tracked child process
+    pids[0] = fork();
+    switch (pids[0]) {
+        case -1:
+            perror("fork");
+            goto fail;
+        case 0:
+            if (execvp(argv2[0], &argv2[0]) < 0) {
+                fprintf(stderr, "execvp (%s): %s\n", argv2[0], strerror(errno));
+                exit(EXIT_FAILURE);
+            }
+        default:
+            if (waitpid(pids[0], NULL, 0) < 0) {
+                perror("waitpid");
+                goto fail;
+            }
+            goto success;
+    }
+    success:
+        pids[0] = 0;
+        free_argv(argv1);
+        free_argv(argv2);
+        return 0;
+    fail:
+        pids[0] = 0;
+        free_argv(argv1);
+        free_argv(argv2);
         return -1;
 }
 
@@ -500,11 +621,18 @@ main_loop()
                 goto fail;
             if (spawn_child_in_redirect(argv, filename) < 0)
                 goto fail;
-        } else if (has_background(buf)) {
+        } else if (has_only_background(buf)) {
             char *argv[MAXARGS];
-            if (parse_argv_background(buf, argv) < 0)
+            if (parse_argv_only_background(buf, argv) < 0)
                 goto fail;
             if (spawn_child_background(argv) < 0)
+                goto fail;
+        } else if (has_one_background(buf)) {
+            char *argv1[MAXARGS];
+            char *argv2[MAXARGS];
+            if (parse_argv_one_background(buf, argv1, argv2) < 0)
+                goto fail;
+            if (spawn_one_background(argv1, argv2) < 0)
                 goto fail;
         } else {
             char *argv[MAXARGS];

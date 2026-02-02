@@ -11,15 +11,15 @@
 #include <fcntl.h>
 #include <assert.h>
 
-#define MAXARGS 100
-#define BUFSIZE 100 
-#define RD_PIPE 0
-#define WR_PIPE 1
+#define MAXARGS           100
+#define BUFSIZE           100 
+#define RD_PIPE           0
+#define WR_PIPE           1
 
 static pid_t pids[2] = { 0, 0 };
 
 void
-sighandler(int signum)
+sig_handler(int signum)
 {
     assert(signum == SIGINT);
     // if there are no pids currently in use then the interrupt
@@ -34,6 +34,7 @@ sighandler(int signum)
     return;
 }
 
+// e.g. ls | wc
 int
 has_pipe(char *buf)
 {
@@ -42,6 +43,7 @@ has_pipe(char *buf)
     return 1;
 }
 
+// e.g. ls -l > tmp.txt
 int
 has_out_redirect(char *buf)
 {
@@ -50,10 +52,20 @@ has_out_redirect(char *buf)
     return 1;
 }
 
+// e.g. wc < tmp.txt
 int
 has_in_redirect(char *buf)
 {
     if (strstr(buf, " < ") == NULL)
+        return 0;
+    return 1;
+}
+
+// e.g. sleep 10 &
+int
+has_background(char *buf)
+{
+    if (strstr(buf, " &") == NULL)
         return 0;
     return 1;
 }
@@ -169,6 +181,25 @@ parse_argv_redirect(char *buf, char *argv[], char *filename)
 }
 
 int
+parse_argv_background(char *buf, char *argv[])
+{
+    int prev = 0, argc = 0, n = strlen(buf);
+    for (int ix = 0; ix < n; ++ix) {
+        if (buf[ix] == '&') {
+            argv[argc] = NULL;
+            break;
+        } else if (buf[ix] == ' ') {
+            if ((argv[argc++] = strndup(&buf[prev], ix - prev)) == NULL) {
+                perror("strndup");
+                return -1;
+            }
+            prev = ix + 1;
+        }
+    }
+    return 0;
+}
+
+int
 spawn_child(char *argv[])
 {
     pids[0] = fork();
@@ -249,6 +280,29 @@ int
 spawn_child_in_redirect(char *argv[], char *filename)
 {
     ;
+}
+
+int
+spawn_child_background(char *argv[])
+{
+    switch (fork()) {
+        case -1:
+            perror("fork");
+            goto fail;
+        case 0:
+            if (execvp(argv[0], &argv[0]) < 0) {
+                perror("execvp");
+                exit(EXIT_FAILURE);
+            }
+        default:
+            goto success;
+    }
+    success:
+        free_argv(argv);
+        return 0;
+    fail:
+        free_argv(argv);
+        return -1;
 }
 
 int
@@ -353,7 +407,7 @@ spawn_children_pipe(char *argv1[], char *argv2[])
 int
 main()
 {
-    signal(SIGINT, sighandler);
+    signal(SIGINT, sig_handler);
     while (1) {
         char buf[BUFSIZE];
         printf("$ ");
@@ -379,6 +433,12 @@ main()
         } else if (has_in_redirect(buf)) {
             puts("commands with input redirection can not be handled");
             continue;
+        } else if (has_background(buf)) {
+            char *argv[MAXARGS];
+            if (parse_argv_background(buf, argv) < 0)
+                exit(EXIT_FAILURE);
+            if (spawn_child_background(argv) < 0)
+                exit(EXIT_FAILURE);
         } else { 
             char *argv[MAXARGS];
             if (parse_argv(buf, argv) < 0)

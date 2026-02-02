@@ -6,10 +6,10 @@ build: myshell
 myshell: myshell.c
 	$(CC) $(CFLAGS) -o $@ $<
 
-run:
+run: build
 	./myshell
 
-check:
+check: build
 	./myshell < input.txt
 
 clean:

@@ -1,0 +1,21 @@
+echo 'Test #1: ls -la > tmp.txt (Output Redirection)'
+sleep 1
+ls -la > tmp.txt
+sleep 2
+echo 'Test #2: cat tmp.txt (Basic Command)'
+sleep 1
+cat tmp.txt
+sleep 2
+echo 'Test #3: wc < tmp.txt (Input Redirection)'
+sleep 1
+wc < tmp.txt
+sleep 2
+echo 'Test #4: ls | wc (Pipe IPC)'
+sleep 1
+ls | wc
+sleep 2
+echo 'Test #5: sleep 10 & (Background Process/Task)'
+sleep 1
+sleep 10 &
+sleep 2
+rm -f tmp.txt

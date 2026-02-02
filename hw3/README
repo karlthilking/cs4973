@@ -4,5 +4,6 @@ what works:
     - output and input redirection
     - background jobs
     - handling SIGINT to kill shell commands but not the shell process
-    
+note:
+    - make check does not test sending a SIGINT to a shell command
 

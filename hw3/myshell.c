@@ -380,7 +380,8 @@ spawn_child(char *argv[])
             goto fail;
         case 0:
             if (execvp(argv[0], &argv[0]) < 0) {
-                fprintf(stderr, "execvp (%s): %s\n", argv[0], strerror(errno));
+                fprintf(stderr, "execvp (%s): %s\n", argv[0], 
+                        strerror(errno));
                 exit(EXIT_FAILURE);
             }
         default:
@@ -425,7 +426,8 @@ spawn_child_out_redirect(char *argv[], char *filename)
             }
             dup2(fd, STDOUT_FILENO);
             if (execvp(argv[0], &argv[0]) < 0) {
-                fprintf(stderr, "execvp (%s): %s\n", argv[0], strerror(errno));
+                fprintf(stderr, "execvp (%s): %s\n", argv[0], 
+                        strerror(errno));
                 exit(EXIT_FAILURE);
             }
         default:
@@ -469,7 +471,8 @@ spawn_child_in_redirect(char *argv[], char *filename)
             }
             dup2(fd, STDIN_FILENO);
             if (execvp(argv[0], &argv[0]) < 0) {
-                fprintf(stderr, "execvp (%s): %s\n", argv[0], strerror(errno));
+                fprintf(stderr, "execvp (%s): %s\n", argv[0], 
+                        strerror(errno));
                 exit(EXIT_FAILURE);
             }
         default:
@@ -554,7 +557,8 @@ spawn_one_background(char *argv1[], char *argv2[])
             goto fail;
         case 0:
             if (execvp(argv2[0], &argv2[0]) < 0) {
-                fprintf(stderr, "execvp (%s): %s\n", argv2[0], strerror(errno));
+                fprintf(stderr, "execvp (%s): %s\n", argv2[0], 
+                        strerror(errno));
                 exit(EXIT_FAILURE);
             }
         default:
@@ -688,7 +692,8 @@ main_loop()
         printf("$ ");
         fflush(stdout);
         if (fgets(buf, BUFSIZE, stdin) == NULL && feof(stdin)) {
-            fprintf(stderr, "Failed to read from stdin: %s\n", strerror(errno));
+            fprintf(stderr, "Failed to read from stdin: %s\n", 
+                    strerror(errno));
             goto fail;
         }
         if (has_pipe(buf)) {

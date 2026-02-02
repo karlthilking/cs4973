@@ -9,16 +9,20 @@
 #include <signal.h>
 #include <sys/types.h>
 #include <fcntl.h>
+#include <assert.h>
 
 #define MAXARGS 100
 #define BUFSIZE 128
 
-pid_t child_pid;
+static pid_t childpid = 0;
 
 void
-sig_handler(int signum)
+sighandler(int signum)
 {
-    if (kill(child_pid, SIGKILL) < 0) {
+    if (!childpid || getpid() == childpid)
+        return;
+    printf("Sending SIGKILL to %d\n", childpid);
+    if (kill(childpid, SIGKILL) < 0) {
         perror("kill");
         exit(EXIT_FAILURE);
     }
@@ -30,6 +34,16 @@ free_argv(char *argv[])
 {
     for (int ix = 0; argv[ix] != NULL; ++ix)
         free(argv[ix]);
+}
+
+int
+has_pipe(char *buf) 
+{
+    int n = strlen(buf);
+    for (int ix = 0; ix <= n - 3; ++ix)
+        if (!strncmp(&buf[ix], " | ", 3))
+            return 1;
+    return 0;
 }
 
 int
@@ -57,7 +71,7 @@ parse_argv(char *buf, char *argv[])
 int
 main()
 {
-    signal(SIGINT, sig_handler);
+    signal(SIGINT, sighandler);
     while (1) {
         char buf[BUFSIZE];
         char *argv[MAXARGS];
@@ -71,10 +85,15 @@ main()
                     strerror(errno));
             exit(EXIT_FAILURE);
         }
+        if (has_pipe(buf)) {
+            puts("commands with pipes can not be handled");
+            continue;
+        }
         if (parse_argv(buf, argv) < 0)
             exit(EXIT_FAILURE);
-        child_pid = fork();
-        switch (child_pid) {
+        childpid = fork();
+        int wstatus;
+        switch (childpid) {
             case -1:
                 perror("fork");
                 exit(EXIT_FAILURE);
@@ -84,7 +103,14 @@ main()
                     exit(EXIT_FAILURE);
                 }
             default:
-                wait(NULL);
+                if (waitpid(childpid, &wstatus, 0) < 0) {
+                    perror("waitpid");
+                    exit(EXIT_FAILURE);
+                }
+                if (WIFSIGNALED(wstatus))
+                    if (WTERMSIG(wstatus) == SIGKILL)
+                        printf("%d terminated by SIGKILL\n",
+                                childpid);
         }
         free_argv(argv);
     }

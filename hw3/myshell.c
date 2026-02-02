@@ -678,8 +678,8 @@ spawn_children_pipe(char *argv1[], char *argv2[])
         return 0;
 }
 
-// main prompt loop that delegates command parsing and spawn child processes
-// to other functions based on command conditions
+// main prompt loop that delegates command parsing and spawning child processes
+// to appropiate helper functions 
 int
 main_loop()
 {

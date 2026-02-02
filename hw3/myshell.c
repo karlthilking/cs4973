@@ -33,8 +33,17 @@ sig_handler(int signum)
 int
 has_pipe(char *buf)
 {
-    if (strstr(buf, " | ") == NULL)
+    char *substr, *l, *r;
+    if ((substr = strstr(buf, " | ")) == NULL)
         return 0;
+    if ((l = index(buf, '\'')) != NULL)
+        if ((r = rindex(buf, '\'')) != NULL)
+            if (l < substr && r > substr + 2)
+                return 0;
+    if ((l = index(buf, '\"')) != NULL)
+        if ((r = rindex(buf, '\"')) != NULL)
+            if (l < substr && r > substr + 2)
+                return 0;
     return 1;
 }
 
@@ -42,8 +51,17 @@ has_pipe(char *buf)
 int
 has_out_redirect(char *buf)
 {
-    if (strstr(buf, " > ") == NULL)
+    char *substr, *l, *r;
+    if ((substr = strstr(buf, " > ")) == NULL)
         return 0;
+    if ((l = index(buf, '\'')) != NULL)
+        if ((r = rindex(buf, '\'')) != NULL)
+            if (l < substr && r > substr + 2)
+                return 0;
+    if ((l = index(buf, '\"')) != NULL)
+        if ((r = rindex(buf, '\"')) != NULL)
+            if (l < substr && r > substr + 2)
+                return 0;
     return 1;
 }
 
@@ -51,8 +69,17 @@ has_out_redirect(char *buf)
 int
 has_in_redirect(char *buf)
 {
-    if (strstr(buf, " < ") == NULL)
+    char *substr, *l, *r;
+    if ((substr = strstr(buf, " < ")) == NULL)
         return 0;
+    if ((l = index(buf, '\'')) != NULL)
+        if ((r = rindex(buf, '\'')) != NULL)
+            if (l < substr && r > substr + 2)
+                return 0;
+    if ((l = index(buf, '\"')) != NULL)
+        if ((r = rindex(buf, '\"')) != NULL)
+            if (l < substr && r > substr + 2)
+                return 0;
     return 1;
 }
 
@@ -60,9 +87,17 @@ has_in_redirect(char *buf)
 int
 has_only_background(char *buf)
 {
-    char *substr;
+    char *substr, *l, *r;
     if ((substr = strstr(buf, " &")) == NULL)
         return 0;
+    if ((l = index(buf, '\'')) != NULL)
+        if ((r = rindex(buf, '\'')) != NULL)
+            if (l < substr && r > substr + 2)
+                return 0;
+    if ((l = index(buf, '\"')) != NULL)
+        if ((r = rindex(buf, '\"')) != NULL)
+            if (l < substr && r > substr + 2)
+                return 0;
     int n = strlen(buf);
     if (substr[2] == '\n' || substr[2] == '\0')
         return 1;
@@ -76,9 +111,17 @@ has_only_background(char *buf)
 int
 has_one_background(char *buf)
 {
-    char *substr;
+    char *substr, *l, *r;
     if ((substr = strstr(buf, " & ")) == NULL)
         return 0;
+    if ((l = index(buf, '\'')) != NULL)
+        if ((r = rindex(buf, '\'')) != NULL)
+            if (l < substr && r > substr + 2)
+                return 0;
+    if ((l = index(buf, '\"')) != NULL)
+        if ((r = rindex(buf, '\"')) != NULL)
+            if (l < substr && r > substr + 2)
+                return 0;
     int n = strlen(substr);
     if (substr[2] == '\n' || substr[2] == '\0')
         return 0;
@@ -116,6 +159,19 @@ parse_argv(char *buf, char *argv[])
         if (buf[ix] == '\n') {
             buf[ix] = '\0';
             break;
+        } else if (buf[ix] == '\'' || buf[ix] == '\"') {
+            char delim = (buf[ix] == '\'') ? '\'' : '\"';
+            while (buf[++ix] != delim)
+                ;
+            ++prev;
+            if ((argv[argc++] = strndup(&buf[prev], ix - prev)) == NULL) {
+                perror("strndup");
+                return -1;
+            }
+            while (buf[++ix] == ' ')
+                ;
+            prev = ix;
+            continue;
         } else if (buf[ix] == ' ') {
             if ((argv[argc++] = strndup(&buf[prev], ix - prev)) == NULL) {
                 perror("strndup");

@@ -24,9 +24,8 @@ sig_handler(int signum)
     assert(signum == SIGINT);
     if (pids[0] == getpid() || pids[1] == getpid())
         exit(EXIT_SUCCESS);
-    printf("\n");
-    if (!(pids[0] || pids[1]))
-        return;
+    printf("\n$ ");
+    fflush(stdout);
     return;
 }
 
@@ -98,7 +97,7 @@ parse_argv(char *buf, char *argv[])
                 perror("strndup");
                 return -1;
             }
-            while (buf[ix++ + 1] == ' ')
+            while (buf[++ix] == ' ')
                 ;
             prev = ix;
             continue;
@@ -124,7 +123,7 @@ parse_argv_pipe(char *buf, char *argv1[], char *argv2[])
     for (ix = 0; ix < n;) {
         if (buf[ix] == '|') {
             argv1[argc1] = NULL;
-            while (buf[ix++ + 1] == ' ')
+            while (buf[++ix] == ' ')
                 ;
             prev = ix;
             break;
@@ -133,7 +132,7 @@ parse_argv_pipe(char *buf, char *argv1[], char *argv2[])
                 perror("strndup");
                 return -1;
             }
-            while (buf[ix++ + 1] == ' ')
+            while (buf[++ix] == ' ')
                 ;
             prev = ix;
             continue;
@@ -149,7 +148,7 @@ parse_argv_pipe(char *buf, char *argv1[], char *argv2[])
                 perror("strndup");
                 return -1;
             }
-            while (buf[ix++ + 1] == ' ')
+            while (buf[++ix] == ' ')
                 ;
             prev = ix;
             continue;
@@ -173,7 +172,7 @@ parse_argv_redirect(char *buf, char *argv[], char *filename)
     for (ix = 0; ix < n;) {
         if (buf[ix] == '>' || buf[ix] == '<') {
             argv[argc] = NULL;
-            while (buf[ix++ + 1] == ' ')
+            while (buf[++ix] == ' ')
                 ;
             prev = ix;
             break;
@@ -182,7 +181,7 @@ parse_argv_redirect(char *buf, char *argv[], char *filename)
                 perror("strndup");
                 return -1;
             }
-            while (buf[ix++ + 1] == ' ')
+            while (buf[++ix] == ' ')
                 ;
             prev = ix;
             continue;
@@ -215,7 +214,7 @@ parse_argv_background(char *buf, char *argv[])
                 perror("strndup");
                 return -1;
             }
-            while (buf[ix++ + 1] == ' ')
+            while (buf[++ix] == ' ')
                 ;
             prev = ix;
             continue;

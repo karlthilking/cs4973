@@ -1,4 +1,4 @@
-/* myshell.c (part 2) */
+/* myshell.c */
 #define _GNU_SOURCE
 #include <stdlib.h>
 #include <stdio.h>
@@ -143,26 +143,112 @@ parse_argv_pipe(char *buf, char *argv1[], char *argv2[])
 }
 
 int
+parse_argv_redirect(char *buf, char *argv[], char *filename)
+{
+    int prev = 0, argc = 0, n = strlen(buf);
+    for (int ix = 0; ix < n; ++ix) {
+        if (buf[ix] == '>' || buf[ix] == '<') {
+            argv[argc] = NULL;
+            ix += 2;
+            prev = ix;
+            break;
+        } else if (buf[ix] == ' ') {
+            if ((argv[argc++] = strndup(&buf[prev], ix - prev)) == NULL) {
+                perror("strndup");
+                return -1;
+            }
+            prev = ix + 1;
+        }
+    }
+    buf[n - 1] = '\0';
+    strncpy(filename, &buf[prev], n - prev);
+#ifdef DEBUG
+    printf("filename: %s\n", filename);
+#endif
+    return 0;
+}
+
+int
 spawn_child(char *argv[])
 {
     pids[0] = fork();
     switch (pids[0]) {
         case -1:
             perror("fork");
-            return -1;
+            goto fail;
         case 0:
             if (execvp(argv[0], &argv[0]) < 0) {
                 perror("execvp");
-                return -1;
+                exit(EXIT_FAILURE);
             }
         default:
             if (waitpid(pids[0], NULL, 0) < 0) {
                 perror("waitpid");
-                return -1;
+                goto fail;
             }
     }
-    pids[0] = 0;
-    free_argv(argv);
+    goto success;
+    success:
+        pids[0] = 0;
+        free_argv(argv);
+        return 0;
+    fail:
+        pids[0] = 0;
+        free_argv(argv);
+        return -1;
+}
+
+int
+spawn_child_out_redirect(char *argv[], char *filename)
+{
+#ifdef DEBUG
+    print_argv(argv);
+    printf("filename: %s\n", filename);
+#endif
+    int fd;
+    if ((fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, S_IRWXU)) < 0) {
+        perror("open");
+        goto fail;
+    }
+    pids[0] = fork();
+    switch (pids[0]) {
+        case -1:
+            perror("fork");
+            goto fail;
+        case 0:
+            if (close(STDOUT_FILENO) < 0) {
+                perror("close");
+                exit(EXIT_FAILURE);
+            }
+            dup2(fd, STDOUT_FILENO);
+            if (execvp(argv[0], &argv[0]) < 0) {
+                perror("execvp");
+                exit(EXIT_FAILURE);
+            }
+        default:
+            if (waitpid(pids[0], NULL, 0) < 0) {
+                perror("waitpid");
+                goto fail;
+            }
+    }
+    goto success;
+    success:
+        pids[0] = 0;
+        free_argv(argv);
+        close(fd);
+        return 0;
+    fail:
+        pids[0] = 0;
+        free_argv(argv);
+        if (fd != -1)
+            close(fd);
+        return -1;
+}
+
+int
+spawn_child_in_redirect(char *argv[], char *filename)
+{
+    ;
 }
 
 int
@@ -284,8 +370,12 @@ main()
             if (spawn_children_pipe(argv1, argv2) < 0) 
                 exit(EXIT_FAILURE);
         } else if (has_out_redirect(buf)) {
-            puts("commands with output redirection can not be handled");
-            continue;
+            char *argv[MAXARGS];
+            char filename[BUFSIZE];
+            if (parse_argv_redirect(buf, argv, filename) < 0)
+                exit(EXIT_FAILURE);
+            if (spawn_child_out_redirect(argv, filename) < 0)
+                exit(EXIT_FAILURE);
         } else if (has_in_redirect(buf)) {
             puts("commands with input redirection can not be handled");
             continue;

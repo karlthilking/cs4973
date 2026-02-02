@@ -189,11 +189,16 @@ parse_argv_redirect(char *buf, char *argv[], char *filename)
         }
         ++ix;
     }
-    buf[n - 1] = '\0';
+    if (buf[n - 1] = '\n' && buf[n - 2] != ' ')
+        buf[n - 1] = '\0';
+    else {
+        assert(buf[n - 2] == ' ');
+        n -= 2;
+        while (buf[n--] == ' ')
+            ;
+        buf[++n] = '\0';
+    }
     strncpy(filename, &buf[prev], n - prev);
-#ifdef DEBUG
-    printf("filename: %s\n", filename);
-#endif
     return 0;
 }
 
@@ -230,7 +235,7 @@ spawn_child(char *argv[])
             goto fail;
         case 0:
             if (execvp(argv[0], &argv[0]) < 0) {
-                perror("execvp");
+                fprintf(stderr, "execvp (%s): %s\n", argv[0], strerror(errno));
                 exit(EXIT_FAILURE);
             }
         default:
@@ -274,7 +279,7 @@ spawn_child_out_redirect(char *argv[], char *filename)
             }
             dup2(fd, STDOUT_FILENO);
             if (execvp(argv[0], &argv[0]) < 0) {
-                perror("execvp");
+                fprintf(stderr, "execvp (%s): %s\n", argv[0], strerror(errno));
                 exit(EXIT_FAILURE);
             }
         default:
@@ -317,7 +322,7 @@ spawn_child_in_redirect(char *argv[], char *filename)
             }
             dup2(fd, STDIN_FILENO);
             if (execvp(argv[0], &argv[0]) < 0) {
-                perror("execvp");
+                fprintf(stderr, "execvp (%s): %s\n", argv[0], strerror(errno));
                 exit(EXIT_FAILURE);
             }
         default:
@@ -349,7 +354,7 @@ spawn_child_background(char *argv[])
             goto fail;
         case 0:
             if (execvp(argv[0], &argv[0]) < 0) {
-                perror("execvp");
+                fprintf(stderr, "execvp (%s): %s\n", argv[0], strerror(errno));
                 exit(EXIT_FAILURE);
             }
         default:
@@ -399,7 +404,8 @@ spawn_children_pipe(char *argv1[], char *argv2[])
                 exit(EXIT_FAILURE);
             }
             if (execvp(argv1[0], &argv1[0]) < 0) {
-                perror("execvp (child 1)");
+                fprintf(stderr, "(child 1) execvp (%s): %s\n",
+                        argv1[0], strerror(errno));
                 exit(EXIT_FAILURE);
             }
         default:
@@ -425,7 +431,8 @@ spawn_children_pipe(char *argv1[], char *argv2[])
                 exit(EXIT_FAILURE);
             }
             if (execvp(argv2[0], &argv2[0]) < 0) {
-                perror("execvp (child 2)");
+                fprintf(stderr, "(child 2) execvp (%s): %s\n",
+                        argv2[0], strerror(errno));
                 exit(EXIT_FAILURE);
             }
         default:

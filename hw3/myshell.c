@@ -16,12 +16,17 @@
 #define RD_PIPE           0
 #define WR_PIPE           1
 
+// shell only handles up to two child processes at a time
 static pid_t pids[2] = { 0, 0 };
 
+// kill all child processes upon receiving SIGINT but
+// not the shell process itself
 void
 sig_handler(int signum)
 {
     assert(signum == SIGINT);
+    // if getpid() equals one of the child pids then
+    // this is a child process and should exit
     if (pids[0] == getpid() || pids[1] == getpid())
         exit(EXIT_SUCCESS);
     printf("\n$ ");
@@ -29,13 +34,15 @@ sig_handler(int signum)
     return;
 }
 
-// e.g. ls | wc
+// check if command uses a pipe (e.g. ls | wc)
 int
 has_pipe(char *buf)
 {
     char *substr, *l, *r;
     if ((substr = strstr(buf, " | ")) == NULL)
         return 0;
+    // if there is a pipe within quotations (e.g. echo 'ls | wc')
+    // then this argument should not be interpreted as a pipe
     if ((l = index(buf, '\'')) != NULL)
         if ((r = rindex(buf, '\'')) != NULL)
             if (l < substr && r > substr + 2)
@@ -47,13 +54,14 @@ has_pipe(char *buf)
     return 1;
 }
 
-// e.g. ls -l > tmp.txt
+// check if command uses output redirection (e.g. ls -l > tmp.txt)
 int
 has_out_redirect(char *buf)
 {
     char *substr, *l, *r;
     if ((substr = strstr(buf, " > ")) == NULL)
         return 0;
+    // interpret '>' within quotations as a string literal
     if ((l = index(buf, '\'')) != NULL)
         if ((r = rindex(buf, '\'')) != NULL)
             if (l < substr && r > substr + 2)
@@ -65,7 +73,7 @@ has_out_redirect(char *buf)
     return 1;
 }
 
-// e.g. wc < tmp.txt
+// check if command uses input redirection (e.g. wc < tmp.txt)
 int
 has_in_redirect(char *buf)
 {
@@ -83,7 +91,8 @@ has_in_redirect(char *buf)
     return 1;
 }
 
-// e.g. sleep 10 &
+// checks if the command is to spawn only a background process
+// and no other process (e.g. sleep 10 &)
 int
 has_only_background(char *buf)
 {
@@ -107,7 +116,8 @@ has_only_background(char *buf)
     return 1;
 }
 
-// e.g. sleep 10 & wc tmp.txt
+// check if the command is to spawn one background process
+// and one other process (e.g. sleep 10 & wc tmp.txt)
 int
 has_one_background(char *buf)
 {
@@ -151,6 +161,8 @@ free_argv(char *argv[])
         free(argv[ix]);
 }
 
+// for parsing commands that do not involve a pipe, redirection or
+// a background task
 int 
 parse_argv(char *buf, char *argv[])
 {
@@ -194,6 +206,7 @@ parse_argv(char *buf, char *argv[])
     return 0;
 }
 
+// parse command involving a pipe (only handles one pipe/two processes)
 int
 parse_argv_pipe(char *buf, char *argv1[], char *argv2[])
 {
@@ -245,6 +258,7 @@ parse_argv_pipe(char *buf, char *argv1[], char *argv2[])
     return 0;
 }
 
+// parse command involving output or input redirection
 int
 parse_argv_redirect(char *buf, char *argv[], char *filename)
 {
@@ -281,6 +295,7 @@ parse_argv_redirect(char *buf, char *argv[], char *filename)
     return 0;
 }
 
+// parse command involving only a background task (e.g. sleep 10 &)
 int
 parse_argv_only_background(char *buf, char *argv[])
 {
@@ -304,6 +319,8 @@ parse_argv_only_background(char *buf, char *argv[])
     return 0;
 }
 
+// parse command involving a background task as well as another
+// typical process (e.g. sleep 10 & wc tmp.txt)
 int
 parse_argv_one_background(char *buf, char *argv1[], char *argv2[])
 {
@@ -352,6 +369,7 @@ parse_argv_one_background(char *buf, char *argv1[], char *argv2[])
     return 0;
 }
 
+// spawn a single child process
 int
 spawn_child(char *argv[])
 {
@@ -382,6 +400,7 @@ spawn_child(char *argv[])
         return -1;
 }
 
+// spawn a child process that redirects output to a file
 int
 spawn_child_out_redirect(char *argv[], char *filename)
 {
@@ -429,6 +448,7 @@ spawn_child_out_redirect(char *argv[], char *filename)
         return -1;
 }
 
+// spawn a child process that redirects input from a file
 int
 spawn_child_in_redirect(char *argv[], char *filename)
 {
@@ -472,6 +492,7 @@ spawn_child_in_redirect(char *argv[], char *filename)
         return -1;
 }
 
+// spawn a child process to run in the background
 int
 spawn_child_background(char *argv[])
 {
@@ -483,10 +504,13 @@ spawn_child_background(char *argv[])
             perror("fork");
             goto fail;
         case 0:
+            // background task prints pid to stdout
+            // for ease of sending signals
             printf("%d\n$ ", getpid());
             fflush(stdout);
             if (execvp(argv[0], &argv[0]) < 0) {
-                fprintf(stderr, "execvp (%s): %s\n", argv[0], strerror(errno));
+                fprintf(stderr, "execvp (%s): %s\n", argv[0], 
+                        strerror(errno));
                 exit(EXIT_FAILURE);
             }
         default:
@@ -500,6 +524,8 @@ spawn_child_background(char *argv[])
         return -1;
 }
 
+// spawn one child process in the background and another
+// blocking child process
 int
 spawn_one_background(char *argv1[], char *argv2[])
 {
@@ -509,16 +535,18 @@ spawn_one_background(char *argv1[], char *argv2[])
             perror("fork");
             goto fail;
         case 0:
+            // background task prints pid to stdout
             printf("%d\n$ ", getpid());
             fflush(stdout);
             if (execvp(argv1[0], &argv1[0]) < 0) {
-                fprintf(stderr, "execvp (%s): %s\n", argv1[0], strerror(errno));
+                fprintf(stderr, "execvp (%s): %s\n", argv1[0], 
+                        strerror(errno));
                 exit(EXIT_FAILURE);
             }
         default:
             break;
     }
-    // tracked child process
+    // blocking child process
     pids[0] = fork();
     switch (pids[0]) {
         case -1:
@@ -548,6 +576,7 @@ spawn_one_background(char *argv1[], char *argv2[])
         return -1;
 }
 
+// spawn two child processes that communicate using a pipe
 int
 spawn_children_pipe(char *argv1[], char *argv2[])
 {
@@ -649,6 +678,8 @@ spawn_children_pipe(char *argv1[], char *argv2[])
         return 0;
 }
 
+// main prompt loop that delegates command parsing and spawn child processes
+// to other functions based on command conditions
 int
 main_loop()
 {
@@ -710,6 +741,7 @@ main_loop()
 int
 main()
 {
+    // register signal handler for SIGINT
     signal(SIGINT, sig_handler);
     if (main_loop() < 0) 
         exit(EXIT_FAILURE);

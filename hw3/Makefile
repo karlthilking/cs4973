@@ -9,4 +9,4 @@ myshell: myshell.c
 check:
 
 clean:
-	rm myshell
+	rm -f myshell

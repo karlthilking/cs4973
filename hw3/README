@@ -1,0 +1,8 @@
+what works:
+    - basic shell commands
+    - pipes
+    - output and input redirection
+    - background jobs
+    - handling SIGINT to kill shell commands but not the shell process
+    
+

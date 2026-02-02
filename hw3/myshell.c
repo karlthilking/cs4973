@@ -92,23 +92,28 @@ free_argv(char *argv[])
 int 
 parse_argv(char *buf, char *argv[])
 {
-    int argc = 0, prev = 0, n = strlen(buf);
-    for (int ix = 0; ix < n; ++ix) {
+    int ix, argc = 0, prev = 0, n = strlen(buf);
+    for (ix = 0; ix < n;) {
         if (buf[ix] == '\n') {
             buf[ix] = '\0';
             break;
         } else if (buf[ix] == ' ') {
-            argv[argc] = strndup(&buf[prev], ix - prev);
-            if (argv[argc++] == NULL) {
+            if ((argv[argc++] = strndup(&buf[prev], ix - prev)) == NULL) {
                 perror("strndup");
                 return -1;
             }
-            prev = ix + 1;
+            while (buf[ix++ + 1] == ' ')
+                ;
+            prev = ix;
+            continue;
         }
+        ++ix;
     }
-    if ((argv[argc++] = strndup(&buf[prev], n - prev)) == NULL) {
-        perror("strndup");
-        return -1;
+    if (prev != ix) {
+        if ((argv[argc++] = strndup(&buf[prev], n - prev)) == NULL) {
+            perror("strndup");
+            return -1;
+        }
     }
     argv[argc] = NULL;
     return 0;
@@ -120,10 +125,11 @@ parse_argv_pipe(char *buf, char *argv1[], char *argv2[])
     int ix, prev, n, argc1, argc2;
     prev = argc1 = argc2 = 0;
     n = strlen(buf);
-    for (ix = 0; ix < n; ++ix) {
+    for (ix = 0; ix < n;) {
         if (buf[ix] == '|') {
             argv1[argc1] = NULL;
-            ix += 2;
+            while (buf[ix++ + 1] == ' ')
+                ;
             prev = ix;
             break;
         } else if (buf[ix] == ' ') {
@@ -131,10 +137,14 @@ parse_argv_pipe(char *buf, char *argv1[], char *argv2[])
                 perror("strndup");
                 return -1;
             }
-            prev = ix + 1;
+            while (buf[ix++ + 1] == ' ')
+                ;
+            prev = ix;
+            continue;
         }
+        ++ix;
     }
-    for (; ix < n; ++ix) {
+    for (; ix < n;) {
         if (buf[ix] == '\n') {
             buf[ix] = '\0';
             break;
@@ -143,12 +153,18 @@ parse_argv_pipe(char *buf, char *argv1[], char *argv2[])
                 perror("strndup");
                 return -1;
             }
-            prev = ix + 1;
+            while (buf[ix++ + 1] == ' ')
+                ;
+            prev = ix;
+            continue;
         }
+        ++ix;
     }
-    if ((argv2[argc2++] = strndup(&buf[prev], n - prev)) == NULL) {
-        perror("strndup");
-        return -1;
+    if (prev != ix) {
+        if ((argv2[argc2++] = strndup(&buf[prev], n - prev)) == NULL) {
+            perror("strndup");
+            return -1;
+        }
     }
     argv2[argc2] = NULL;
     return 0;
@@ -157,11 +173,12 @@ parse_argv_pipe(char *buf, char *argv1[], char *argv2[])
 int
 parse_argv_redirect(char *buf, char *argv[], char *filename)
 {
-    int prev = 0, argc = 0, n = strlen(buf);
-    for (int ix = 0; ix < n; ++ix) {
+    int ix, prev = 0, argc = 0, n = strlen(buf);
+    for (ix = 0; ix < n;) {
         if (buf[ix] == '>' || buf[ix] == '<') {
             argv[argc] = NULL;
-            ix += 2;
+            while (buf[ix++ + 1] == ' ')
+                ;
             prev = ix;
             break;
         } else if (buf[ix] == ' ') {
@@ -169,8 +186,12 @@ parse_argv_redirect(char *buf, char *argv[], char *filename)
                 perror("strndup");
                 return -1;
             }
-            prev = ix + 1;
+            while (buf[ix++ + 1] == ' ')
+                ;
+            prev = ix;
+            continue;
         }
+        ++ix;
     }
     buf[n - 1] = '\0';
     strncpy(filename, &buf[prev], n - prev);
@@ -184,7 +205,7 @@ int
 parse_argv_background(char *buf, char *argv[])
 {
     int prev = 0, argc = 0, n = strlen(buf);
-    for (int ix = 0; ix < n; ++ix) {
+    for (int ix = 0; ix < n;) {
         if (buf[ix] == '&') {
             argv[argc] = NULL;
             break;
@@ -193,8 +214,12 @@ parse_argv_background(char *buf, char *argv[])
                 perror("strndup");
                 return -1;
             }
-            prev = ix + 1;
+            while (buf[ix++ + 1] == ' ')
+                ;
+            prev = ix;
+            continue;
         }
+        ++ix;
     }
     return 0;
 }

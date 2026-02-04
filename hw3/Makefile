@@ -1,13 +1,13 @@
 CC = gcc
 CFLAGS = -g3 -O0
 
-build: myshell
+build: shell
 
-myshell: myshell.c
+shell: shell.c
 	$(CC) $(CFLAGS) -o $@ $<
 
 check: build
-	./myshell
+	./shell
 
 clean:
-	rm -f myshell
+	rm -f shell

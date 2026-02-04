@@ -19,15 +19,18 @@
 
 ucontext_t uc;
 
-// kill all child processes upon receiving SIGINT but
-// not the shell process itself
+// shell process does not get killed by SIGINT; child shell processes
+// exit from SIGINT by setting signal(SIGINT, SIG_DFL) for default behavior
 void
 sig_handler(int signum)
 {
     assert(signum == SIGINT);
     putchar('\n');
-    setcontext(&uc);
-    return;
+    // setcontext to start of main shell loop to avoid shell process
+    // returning to a random instruction within the shell loop and not
+    // properly reprompting the user
+    if (setcontext(&uc) < 0)
+        return;
 }
 
 // check if command uses a pipe (e.g. ls | wc)

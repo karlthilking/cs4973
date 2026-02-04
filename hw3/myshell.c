@@ -140,7 +140,8 @@ has_one_background(char *buf)
     return 0;
 }
 
-// strdup/strndup call malloc so args must be freed
+// man 3 strdup/strndup: memory for the new string is obtained with malloc;
+// so argv strings must be freed with free()
 void
 free_argv(char *argv[])
 {

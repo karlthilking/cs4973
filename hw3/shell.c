@@ -72,19 +72,26 @@ bg_list_add(bg_list_t *bg_list, pid_t bg_pid)
 }
 
 void
+bg_list_check(bg_list_t *bg_list)
+{
+    pid_t bg_pid;
+    int id;
+    for (int i = 0; i <= bg_list->bg_task_count / 2; ++i) {
+        if ((bg_pid = waitpid(bg_list->bg_tasks[i], NULL, WNOHANG)) > 0) {
+            if ((id = bg_list_remove(bg_list, bg_pid)) != -1) {
+                printf("[%d] %d done\n", id, bg_pid);
+                break;
+            }
+        }
+    }
+}
+
+void
 sig_handler(int sig)
 {
     pid_t pid, bg_id;
     switch (sig) {
         case SIGUSR2:
-            return;
-        case SIGCHLD:
-            for (int i = 0; i < bg_list.bg_task_count; ++i)
-                if ((pid = waitpid(bg_list.bg_tasks[i], NULL, WNOHANG)) > 0)
-                    if ((bg_id = bg_list_remove(&bg_list, pid)) != -1)
-                        printf("[%d] %d done\n", bg_id, pid);
-            if (setcontext(&uc) < 0)
-                perror("setcontext");
             return;
         case SIGINT:
             putchar('\n');
@@ -222,7 +229,6 @@ spawn_tasks(task_t tasks[], int ntasks)
                 break;
             case 0:
                 signal(SIGINT, SIG_DFL);
-                signal(SIGCHLD, SIG_DFL);
                 rc = ~-1;
                 fd = ~-1;
                 if (tasks[pending].opt & OPT_PIPERD) {
@@ -291,11 +297,12 @@ free_tasks(task_t tasks[], int ntasks)
     }
 }
 
-void run_shell()
+void 
+run_shell()
 {
-    pid_t pid;
     while (1) {
         getcontext(&uc);
+        bg_list_check(&bg_list);
         char buf[BUFSIZE];
         printf("$ ");
         fflush(stdout);
@@ -322,7 +329,6 @@ main(int argc, char *argv[])
 {
     memset((void *)&bg_list, 0, sizeof(bg_list));
     signal(SIGINT, sig_handler);
-    signal(SIGCHLD, sig_handler);
     signal(SIGUSR2, sig_handler);
     run_shell();
     exit(0);

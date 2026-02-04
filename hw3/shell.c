@@ -11,6 +11,7 @@
 #include <assert.h>
 #include <fcntl.h>
 #include <ucontext.h>
+#include <stdint.h>
 
 #define BUFSIZE         128
 #define FILENAME_LEN    64
@@ -75,14 +76,14 @@ bg_list_add(bg_list_t *bg_list, pid_t bg_pid)
 void
 sig_handler(int sig)
 {
+    pid_t pid;
     switch (sig) {
         case SIGUSR2:
             return;
         case SIGCHLD:
-            pid_t pid; 
             if ((pid = waitpid(0, NULL, WNOHANG)) > 0)
-                if (bg_list_remove(list, pid) != -1)
-                    printf("[%d] %d Done\n", bg_list->bg_task_count + 1, pid);
+                if (bg_list_remove(&bg_list, pid) != -1)
+                    printf("[%d] %d Done\n", bg_list.bg_task_count + 1, pid);
             return;
         case SIGINT:
             putchar('\n');
@@ -95,7 +96,7 @@ sig_handler(int sig)
 int
 count_tasks(char *command)
 {
-    if (command[i] == '\n')
+    if (command[0] == '\n')
         return 0;
     int ntasks = 1;
     for (int i = 0; i < strlen(command); ++i) {
@@ -112,7 +113,7 @@ count_tasks(char *command)
             while (command[++i] == ' ')
                 ;
             if (command[i] == '\n')
-                return;
+                return ntasks;
             ++ntasks;
         }
     }
@@ -183,7 +184,7 @@ parse_command(char *cmd, task_t tasks[], int ntasks)
                 while (cmd[++cur] == ' ')
                     ;
                 prev = cur;
-                argv[argc] = NULL;
+                tasks[tn].argv[argc] = NULL;
                 break;
             }
             ++cur;
@@ -199,7 +200,7 @@ void
 spawn_tasks(task_t tasks[], int ntasks)
 {
     int pending = ntasks;
-    int fd, pipefds[2];
+    int rc, fd, pipefds[2];
     while (pending--) {
         if (tasks[pending].opt & PIPE_READER) {
             if (pipe(pipefds) < 0) {
@@ -215,36 +216,42 @@ spawn_tasks(task_t tasks[], int ntasks)
                 perror(tasks[pending].argv[0]);
                 break;
             case 0:
+                rc = ~-1;
+                fd = ~-1;
                 signal(SIGINT, SIG_DFL);
-                close(pipefds[RD_PIPE]);
-                close(pipefds[WR_PIPE]);
-                if (tasks[pending].opt & PIPE_READER || 
-                    tasks[pending].opt & REDIRECT_IN)
-                    close(STDIN_FILENO);
-                if (tasks[pending] & PIPE_READER) {
-                    close(STDIN_FILENO);
-                    if ((fd = dup(pipefds[RD_PIPE])) < 0) {
-                        perror(tasks[pending].argv[0]);
-                        exit(EXIT_FAILURE);
-                    }
-                } else if (tasks[pending] & PIPE_WRITER) {
-                    close(STDOUT_FILENO);
-                    if ((fd = dup(pipefds[WR_PIPE])) < 0) {
-                        perror(tasks[pending].argv[0]);
-                        exit(EXIT_FAILURE);
-                    }
+                if (tasks[pending].opt & PIPE_READER) {
+                    rc = close(STDIN_FILENO);
+                    fd = dup(pipefds[RD_PIPE]);
+                } else if (tasks[pending].opt & REDIRECT_IN) {
+                    rc = close(STDIN_FILENO);
+                    fd = open(tasks[pending].filename, O_RDONLY);
+                    dup2(fd, STDIN_FILENO);
+                } else if (tasks[pending].opt & PIPE_WRITER) {
+                    rc = close(STDOUT_FILENO);
+                    fd = dup(pipefds[WR_PIPE]);
+                } else if (tasks[pending].opt & REDIRECT_OUT) {
+                    rc = close(STDOUT_FILENO);
+                    fd = open(tasks[pending].filename, O_WRONLY | O_CREAT |
+                              O_TRUNC, S_IRWXU);
+                    dup2(fd, STDOUT_FILENO);
                 }
-                if (tasks[pending] & BACKGROUND_JOB) {
+                if (fd < 0 || rc < 0) {
+                    perror(tasks[pending].argv[0]);
+                    exit(EXIT_FAILURE);
+                }
+                if (tasks[pending].opt & BACKGROUND_JOB) {
                     printf("[%d] %d\n", bg_list.bg_task_count, getpid());
                     kill(getppid(), SIGUSR2);
                 }
+                close(pipefds[RD_PIPE]);
+                close(pipefds[WR_PIPE]);
                 if (execvp(tasks[pending].argv[0], tasks[pending].argv) < 0) {
                     perror(tasks[pending].argv[0]);
                     exit(EXIT_FAILURE);
                 }
             default:
                 if (tasks[pending].opt & BACKGROUND_JOB) {
-                    bg_list_add(bg_list, tasks[pending].pid);
+                    bg_list_add(&bg_list, tasks[pending].pid);
                     pause();
                 }
                 break;
@@ -256,6 +263,7 @@ spawn_tasks(task_t tasks[], int ntasks)
         if (waitpid(tasks[i].pid, NULL, 0) < 0)
             perror(tasks[i].argv[0]);
     }
+    return;
 }
 
 void run_shell()
@@ -284,6 +292,7 @@ void run_shell()
 int
 main(int argc, char *argv[])
 {
+    memset((void *)&bg_list, 0, sizeof(bg_list));
     signal(SIGINT, sig_handler);
     signal(SIGUSR2, sig_handler);
     signal(SIGCHLD, sig_handler);

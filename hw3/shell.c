@@ -96,8 +96,6 @@ sig_handler(int sig)
             if (setcontext(&uc) < 0)
                 perror("setcontext");
             return;
-        case SIGUSR2:
-            return;
         case SIGINT:
             putchar('\n');
             if (setcontext(&uc) < 0)
@@ -137,6 +135,11 @@ int
 parse_command(char *cmd, task_t tasks[], int ntasks)
 {
     int cur = 0, prev = 0, len = strlen(cmd);
+    if (cmd[0] == ' ') {
+        while (cmd[++cur] == ' ')
+            ;
+        prev = cur;
+    }
     for (int tn = 0; tn < ntasks; ++tn) {
         int argc = 0;
         while (1) {
@@ -261,12 +264,9 @@ spawn_tasks(task_t tasks[], int ntasks)
                     perror(tasks[pending].argv[0]);
                     exit(EXIT_FAILURE);
                 }
-                if (tasks[pending].opt & OPT_BGTASK)
-                    kill(getppid(), SIGUSR2);
                 if (execvp(tasks[pending].argv[0], tasks[pending].argv) < 0) {
                     perror(tasks[pending].argv[0]);
-                    if (tasks[pending].opt & OPT_BGTASK)
-                        kill(getppid(), SIGUSR1);
+                    kill(getppid(), SIGUSR1);
                     exit(EXIT_FAILURE);
                 }
             default:
@@ -336,7 +336,6 @@ main(int argc, char *argv[])
     memset((void *)&bg_list, 0, sizeof(bg_list));
     signal(SIGINT, sig_handler);
     signal(SIGUSR1, sig_handler);
-    signal(SIGUSR2, sig_handler);
     run_shell();
     exit(0);
 }

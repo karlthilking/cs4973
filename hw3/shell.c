@@ -19,6 +19,7 @@
 #define MAXARGS         32
 #define RD_PIPE         0
 #define WR_PIPE         1
+/* task options */
 #define OPT_PIPERD      1   // reads from pipe
 #define OPT_PIPEWR      2   // writes to pipe
 #define OPT_BGTASK      4   // background task
@@ -30,10 +31,10 @@
 #define IX_RDROUT       2   // index for redirected output fd
 #define IX_RDRIN        3   // index for redirected input fd
 #define MAX_BG_TASKS    32
-#define PIPE_UNUSED     0   // if pipefd1 and pipefd2 are not used or valid
+#define PIPE_UNUSED     0   // if pipefd1 and pipefd2 are not used/valid fds
 #define PIPE_USED1      1   // if pipefd1 is being used
 #define PIPE_USED2      2   // if pipefd2 is being used
-// if pipe_status & PIPE_USED1 && pipe_status & PIPE_USED2 (both are being used)
+// if !(pipe_status ^ (PIPE_USED1 | PIPE_USED2)) (both are being used)
 // then the current child process needs to read from one pipe and write to the other
 // so PIPE_READ1 is set if the child process should read from pipe1 (and write to pipe
 // 2), otherwise, the child process will know to read from pipe2 and write to pipe1
@@ -106,10 +107,6 @@ sig_handler(int sig)
 {
     pid_t pid, bg_id;
     switch (sig) {
-        case SIGUSR1:
-            if (setcontext(&uc) < 0)
-                perror("setcontext");
-            return;
         case SIGINT:
             putchar('\n');
             if (setcontext(&uc) < 0)
@@ -273,12 +270,6 @@ spawn_tasks(task_t tasks[], int ntasks)
                     continue;
                 }
                 pipe_status |= PIPE_USED2;
-                // make sure PIPE_READ1 is not set; ideally this should be toggled off
-                // by the parent process after fork in the previous loop iteration 
-                if (pipe_status & PIPE_READ1) {
-                    fprintf(stderr, "pipe_status: %d\n", pipe_status);
-                    pipe_status ^= PIPE_READ1;
-                }
             }
             // if current task reads from a pipe, then it must be true that the next
             // task is the one writing to same pipe
@@ -292,31 +283,23 @@ spawn_tasks(task_t tasks[], int ntasks)
             case 0:
                 signal(SIGINT, SIG_DFL);
                 if (tasks[pending].opt & OPT_PIPERD) {
-                    if (close(STDIN_FILENO) < 0) 
-                        err(EXIT_FAILURE, "close");
                     if (pipe_status & PIPE_READ1) {
-                        if ((fds[IX_PIPERD] = dup(pipefd1[RD_PIPE])) < 0)
-                            err(EXIT_FAILURE, "dup");
-                    } else {
-                        if ((fds[IX_PIPERD] = dup(pipefd2[RD_PIPE])) < 0)
-                            err(EXIT_FAILURE, "dup");
+                        if (dup2(pipefd1[RD_PIPE], STDIN_FILENO) < 0) {
+                            err(EXIT_FAILURE, "dup2");
+                        }
+                    } else if (dup2(pipefd2[RD_PIPE], STDIN_FILENO) < 0) {
+                        err(EXIT_FAILURE, "dup2");
                     }
                 }
                 if (tasks[pending].opt & OPT_PIPEWR) {
-                    if (close(STDOUT_FILENO) < 0)
-                        err(EXIT_FAILURE, "close");
-                    // if pipe1 and pipe2 are used, but pipe1 is not setup for reading
-                    // i.e. this task reads and writes using pipes but it just setup
-                    // pipe2 for reading, so it must use pipe1 for writing
-                    if (!(pipe_status ^ (PIPE_USED1 | PIPE_USED2))) {
-                        assert((tasks[pending].opt & OPT_PIPERD) && 
-                               (tasks[pending].opt & OPT_PIPEWR));
-                        if ((fds[IX_PIPEWR] = dup(pipefd1[WR_PIPE])) < 0)
-                            err(EXIT_FAILURE, "dup");
-                    } else {
-                        if ((fds[IX_PIPEWR] = dup(pipefd2[WR_PIPE])) < 0)
-                            err(EXIT_FAILURE, "dup");
-                    }
+                    if (!(pipe_status & PIPE_USED1))
+                        dup2(pipefd2[WR_PIPE], STDOUT_FILENO);
+                    else if (!(pipe_status & PIPE_USED2))
+                        dup2(pipefd1[WR_PIPE], STDOUT_FILENO);
+                    else if (pipe_status & PIPE_READ1)
+                        dup2(pipefd2[WR_PIPE], STDOUT_FILENO);
+                    else
+                        dup2(pipefd1[WR_PIPE], STDOUT_FILENO);
                 }
                 // dup2 automatically closes newfd (second argument) so 
                 // child processes that redirect input or output do not need
@@ -340,7 +323,6 @@ spawn_tasks(task_t tasks[], int ntasks)
                 }
                 if (execvp(tasks[pending].argv[0], tasks[pending].argv) < 0) {
                     perror(tasks[pending].argv[0]);
-                    kill(getppid(), SIGUSR1);
                     exit(EXIT_FAILURE);
                 }
             default:
@@ -348,7 +330,7 @@ spawn_tasks(task_t tasks[], int ntasks)
                     if ((bgid = bg_list_add(&bg_list, tasks[pending].pid)) != -1)
                         printf("[%d] %d\n", bgid, tasks[pending].pid);
                 if (tasks[pending].opt & OPT_PIPEWR) {
-                    if (!(pipe_status & PIPE_READ1)) {
+                    if (!((pipe_status & PIPE_READ1) || PIPE_USED2)) {
                         close(pipefd1[RD_PIPE]);
                         close(pipefd1[WR_PIPE]);
                         pipe_status ^= PIPE_USED1;
@@ -363,14 +345,6 @@ spawn_tasks(task_t tasks[], int ntasks)
                 break;
         }
     }
-    if (pipe_status & PIPE_USED1) {
-        close(pipefd1[0]);
-        close(pipefd1[1]);
-    }
-    if (pipe_status & PIPE_USED2) {
-        close(pipefd2[0]);
-        close(pipefd2[1]);
-    }
     int wstatus;
     for (int i = 0; i < ntasks; ++i) {
         if (tasks[i].opt & OPT_BGTASK)
@@ -383,6 +357,9 @@ spawn_tasks(task_t tasks[], int ntasks)
     return;
 }
 
+// task argv strings and filenames (for tasks with input or output redirection) use
+// strndup to allocate these strings; strndup calls malloc internally so each string
+// must be freed before the task is deallocated
 void
 free_tasks(task_t tasks[], int ntasks)
 {
@@ -426,7 +403,6 @@ main(int argc, char *argv[])
 {
     memset((void *)&bg_list, 0, sizeof(bg_list));
     signal(SIGINT, sig_handler);
-    signal(SIGUSR1, sig_handler);
     run_shell();
     exit(0);
 }

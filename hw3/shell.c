@@ -29,8 +29,15 @@
 #define IX_PIPEWR       1   // index for pipe writer fd
 #define IX_RDROUT       2   // index for redirected output fd
 #define IX_RDRIN        3   // index for redirected input fd
-#define IX_PPC          4   // index for parent process communication fd
 #define MAX_BG_TASKS    32
+#define PIPE_UNUSED     0   // if pipefd1 and pipefd2 are not used or valid
+#define PIPE_USED1      1   // if pipefd1 is being used
+#define PIPE_USED2      2   // if pipefd2 is being used
+// if pipe_status & PIPE_USED1 && pipe_status & PIPE_USED2 (both are being used)
+// then the current child process needs to read from one pipe and write to the other
+// so PIPE_READ1 is set if the child process should read from pipe1 (and write to pipe
+// 2), otherwise, the child process will know to read from pipe2 and write to pipe1
+#define PIPE_READ1      4
 
 // shell child process/task struct
 typedef struct task_t {
@@ -239,26 +246,43 @@ void
 spawn_tasks(task_t tasks[], int ntasks)
 {
     int pending = ntasks;
-    int bgid, pipefds[2], fds[5];
+    int bgid, pipefd1[2], pipefd2[2], fds[4];
+    int pipe_status = PIPE_UNUSED;
     while (pending--) {
         if (tasks[pending].opt & OPT_PIPERD) {
-            if (pipe(pipefds) < 0) {
-                fprintf(stderr, "%s, %s: %s\n", 
-                        tasks[pending].argv[0], 
-                        tasks[--pending].argv[0],
-                        strerror(errno));
-                continue;
+            if (pipe_status == PIPE_UNUSED || pipe_status & PIPE_USED2) {
+                assert(!(pipe_status & PIPE_USED1));
+                if (pipe(pipefd1) < 0 || fcntl(pipefd1[0], F_SETFD, FD_CLOEXEC) < 0 ||
+                    fcntl(pipefd1[1], F_SETFD, FD_CLOEXEC) < 0) {
+                    fprintf(stderr, "%s %s: %s\n", 
+                            tasks[pending].argv[0],
+                            tasks[--pending].argv[0], 
+                            strerror(errno));
+                    continue;
+                }
+                // pipe1 is going to be used and this task is reading from it
+                pipe_status |= PIPE_USED1 | PIPE_READ1;
+            } else {
+                assert(!(pipe_status & PIPE_USED2) && (pipe_status & PIPE_USED1));
+                if (pipe(pipefd2) < 0 || fcntl(pipefd2[0], F_SETFD, FD_CLOEXEC) < 0 ||
+                    fcntl(pipefd2[1], F_SETFD, FD_CLOEXEC) < 0) {
+                    fprintf(stderr, "%s %s: %s\n", 
+                            tasks[pending].argv[0], 
+                            tasks[--pending].argv[0], 
+                            strerror(errno));
+                    continue;
+                }
+                pipe_status |= PIPE_USED2;
+                // make sure PIPE_READ1 is not set; ideally this should be toggled off
+                // by the parent process after fork in the previous loop iteration 
+                if (pipe_status & PIPE_READ1) {
+                    fprintf(stderr, "pipe_status: %d\n", pipe_status);
+                    pipe_status ^= PIPE_READ1;
+                }
             }
+            // if current task reads from a pipe, then it must be true that the next
+            // task is the one writing to same pipe
             assert(tasks[pending - 1].opt & OPT_PIPEWR);
-            // child processes automatically close pipefds on exec
-            if (fcntl(pipefds[0], F_SETFD, FD_CLOEXEC) < 0 ||
-                fcntl(pipefds[1], F_SETFD, FD_CLOEXEC) < 0) {
-                fprintf(stderr, "%s, %s: %s\n",
-                        tasks[pending].argv[0],
-                        tasks[--pending].argv[0],
-                        strerror(errno));
-                continue;
-            }
         }
         tasks[pending].pid = fork();
         switch (tasks[pending].pid) {
@@ -268,16 +292,31 @@ spawn_tasks(task_t tasks[], int ntasks)
             case 0:
                 signal(SIGINT, SIG_DFL);
                 if (tasks[pending].opt & OPT_PIPERD) {
-                    if (close(STDIN_FILENO) < 0)
-                        err(EXIT_FAILURE, "close(STDIN_FILENO)");
-                    if ((fds[IX_PIPERD] = dup(pipefds[RD_PIPE])) < 0)
-                        err(EXIT_FAILURE, "dup(pipefds[RD_PIPE])");
+                    if (close(STDIN_FILENO) < 0) 
+                        err(EXIT_FAILURE, "close");
+                    if (pipe_status & PIPE_READ1) {
+                        if ((fds[IX_PIPERD] = dup(pipefd1[RD_PIPE])) < 0)
+                            err(EXIT_FAILURE, "dup");
+                    } else {
+                        if ((fds[IX_PIPERD] = dup(pipefd2[RD_PIPE])) < 0)
+                            err(EXIT_FAILURE, "dup");
+                    }
                 }
                 if (tasks[pending].opt & OPT_PIPEWR) {
                     if (close(STDOUT_FILENO) < 0)
-                        err(EXIT_FAILURE, "close(STDOUT_FILENO)");
-                    if ((fds[IX_PIPEWR] = dup(pipefds[WR_PIPE])) < 0)
-                        err(EXIT_FAILURE, "dup(pipefds[WR_PIPE])");
+                        err(EXIT_FAILURE, "close");
+                    // if pipe1 and pipe2 are used, but pipe1 is not setup for reading
+                    // i.e. this task reads and writes using pipes but it just setup
+                    // pipe2 for reading, so it must use pipe1 for writing
+                    if (!(pipe_status ^ (PIPE_USED1 | PIPE_USED2))) {
+                        assert((tasks[pending].opt & OPT_PIPERD) && 
+                               (tasks[pending].opt & OPT_PIPEWR));
+                        if ((fds[IX_PIPEWR] = dup(pipefd1[WR_PIPE])) < 0)
+                            err(EXIT_FAILURE, "dup");
+                    } else {
+                        if ((fds[IX_PIPEWR] = dup(pipefd2[WR_PIPE])) < 0)
+                            err(EXIT_FAILURE, "dup");
+                    }
                 }
                 // dup2 automatically closes newfd (second argument) so 
                 // child processes that redirect input or output do not need
@@ -292,7 +331,7 @@ spawn_tasks(task_t tasks[], int ntasks)
                 }
                 if (tasks[pending].opt & OPT_RDROUT) {
                     if ((fds[IX_RDROUT] = open(tasks[pending].filename,
-                                               O_WRONLY | O_CREAT | O_TRUNC,
+                                               O_WRONLY | O_CREAT | O_TRUNC, 
                                                S_IRWXU)) < 0) {
                         err(EXIT_FAILURE, "open");
                     }
@@ -309,11 +348,28 @@ spawn_tasks(task_t tasks[], int ntasks)
                     if ((bgid = bg_list_add(&bg_list, tasks[pending].pid)) != -1)
                         printf("[%d] %d\n", bgid, tasks[pending].pid);
                 if (tasks[pending].opt & OPT_PIPEWR) {
-                    close(pipefds[RD_PIPE]);
-                    close(pipefds[WR_PIPE]);
+                    if (!(pipe_status & PIPE_READ1)) {
+                        close(pipefd1[RD_PIPE]);
+                        close(pipefd1[WR_PIPE]);
+                        pipe_status ^= PIPE_USED1;
+                    } else {
+                        close(pipefd2[RD_PIPE]);
+                        close(pipefd2[WR_PIPE]);
+                        pipe_status ^= PIPE_USED2;
+                    }
                 }
+                if ((tasks[pending].opt & OPT_PIPERD) && pipe_status & PIPE_READ1)
+                    pipe_status ^= PIPE_READ1;
                 break;
         }
+    }
+    if (pipe_status & PIPE_USED1) {
+        close(pipefd1[0]);
+        close(pipefd1[1]);
+    }
+    if (pipe_status & PIPE_USED2) {
+        close(pipefd2[0]);
+        close(pipefd2[1]);
     }
     int wstatus;
     for (int i = 0; i < ntasks; ++i) {

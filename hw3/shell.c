@@ -46,7 +46,7 @@ ucontext_t uc;
 int
 bg_list_remove(bg_list_t *bg_list, pid_t bg_pid)
 {
-    for (int i = 0; i < bg_list->bg_task_count; ++i) {
+    for (int i = 0; i < MAX_BG_TASKS; ++i) {
         if (bg_list->bg_tasks[i] == bg_pid) {
             bg_list->bg_tasks[i] = 0;
             return bg_list->bg_task_count--;
@@ -60,14 +60,12 @@ bg_list_add(bg_list_t *bg_list, pid_t bg_pid)
 {
     if (bg_list->bg_task_count == MAX_BG_TASKS)
         return -1;
-    ++bg_list->bg_task_count;
-    for (int i = 0; i <= bg_list->bg_task_count; ++i) {
+    for (int i = 0; i < MAX_BG_TASKS; ++i) {
         if (bg_list->bg_tasks[i] == 0) {
             bg_list->bg_tasks[i] = bg_pid;
-            return 0;
+            return ++bg_list->bg_task_count;
         }
     }
-    --bg_list->bg_task_count;
     return -1;
 }
 
@@ -75,15 +73,18 @@ void
 bg_list_check(bg_list_t *bg_list)
 {
     pid_t bg_pid;
-    int id;
-    for (int i = 0; i <= bg_list->bg_task_count / 2; ++i) {
-        if ((bg_pid = waitpid(bg_list->bg_tasks[i], NULL, WNOHANG)) > 0) {
+    int id, rc, wstatus;
+    for (int i = 0; i < MAX_BG_TASKS; ++i) {
+        if ((bg_pid = waitpid(bg_list->bg_tasks[i], &wstatus, WNOHANG)) > 0) {
             if ((id = bg_list_remove(bg_list, bg_pid)) != -1) {
-                printf("[%d] %d done\n", id, bg_pid);
-                break;
+                if (WIFEXITED(wstatus) && ((rc = WEXITSTATUS(wstatus))) != 0)
+                    printf("[%d] %d exit %d\n", id, bg_pid, rc); 
+                else
+                    printf("[%d] %d done\n", id, bg_pid);
             }
         }
     }
+    return;
 }
 
 void
@@ -91,6 +92,10 @@ sig_handler(int sig)
 {
     pid_t pid, bg_id;
     switch (sig) {
+        case SIGUSR1:
+            if (setcontext(&uc) < 0)
+                perror("setcontext");
+            return;
         case SIGUSR2:
             return;
         case SIGINT:
@@ -218,6 +223,7 @@ spawn_tasks(task_t tasks[], int ntasks)
             if (pipe(pipefds) < 0) {
                fprintf(stderr, "pipe: %s %s\n", tasks[pending].argv[0], 
                        tasks[pending - 1].argv[0]);
+               --pending;
                continue;
             }
             assert(tasks[pending - 1].opt & OPT_PIPEWR);
@@ -255,19 +261,19 @@ spawn_tasks(task_t tasks[], int ntasks)
                     perror(tasks[pending].argv[0]);
                     exit(EXIT_FAILURE);
                 }
-                if (tasks[pending].opt & OPT_BGTASK) {
-                    printf("[%d] %d\n", bg_list.bg_task_count + 1, getpid());
+                if (tasks[pending].opt & OPT_BGTASK)
                     kill(getppid(), SIGUSR2);
-                }
-                close(pipefds[RD_PIPE]);
-                close(pipefds[WR_PIPE]);
                 if (execvp(tasks[pending].argv[0], tasks[pending].argv) < 0) {
                     perror(tasks[pending].argv[0]);
+                    if (tasks[pending].opt & OPT_BGTASK)
+                        kill(getppid(), SIGUSR1);
                     exit(EXIT_FAILURE);
                 }
             default:
                 if (tasks[pending].opt & OPT_BGTASK) {
-                    bg_list_add(&bg_list, tasks[pending].pid);
+                    int id;
+                    if ((id = bg_list_add(&bg_list, tasks[pending].pid)) != -1)
+                        printf("[%d] %d\n", id, tasks[pending].pid);
                     pause();
                 }
                 if (tasks[pending].opt & OPT_PIPEWR) {
@@ -329,6 +335,7 @@ main(int argc, char *argv[])
 {
     memset((void *)&bg_list, 0, sizeof(bg_list));
     signal(SIGINT, sig_handler);
+    signal(SIGUSR1, sig_handler);
     signal(SIGUSR2, sig_handler);
     run_shell();
     exit(0);

@@ -220,7 +220,7 @@ void
 spawn_tasks(task_t tasks[], int ntasks)
 {
     int pending = ntasks;
-    int rc, fd, pipefds[2];
+    int rc, fd, id, pipefds[2];
     while (pending--) {
         if (tasks[pending].opt & OPT_PIPERD) {
             if (pipe(pipefds) < 0) {
@@ -270,12 +270,9 @@ spawn_tasks(task_t tasks[], int ntasks)
                     exit(EXIT_FAILURE);
                 }
             default:
-                if (tasks[pending].opt & OPT_BGTASK) {
-                    int id;
+                if (tasks[pending].opt & OPT_BGTASK)
                     if ((id = bg_list_add(&bg_list, tasks[pending].pid)) != -1)
                         printf("[%d] %d\n", id, tasks[pending].pid);
-                    pause();
-                }
                 if (tasks[pending].opt & OPT_PIPEWR) {
                     close(pipefds[RD_PIPE]);
                     close(pipefds[WR_PIPE]);

@@ -7,6 +7,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <signal.h>
+#include <fcntl.h>
 
 #define WR 0
 #define RD 1
@@ -14,7 +15,7 @@
 int
 main(int argc, char *argv[])
 {
-    int rc, tmp, fd, errsv, sv[2];
+    int errsv, sv[2];
     char buf[256];
     memset(buf, 0, sizeof(buf));
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0)
@@ -23,39 +24,17 @@ main(int argc, char *argv[])
         case -1:
             err(EXIT_FAILURE, "fork");
         case 0:
-            if ((fd = dup(sv[WR])) < 0)
-                err(EXIT_FAILURE, "dup");
-            close(sv[WR]);
-            close(sv[RD]);
-            snprintf(buf, sizeof(buf), "errno: %d\n", errno);
-            rc = 0;
-            while (rc < sizeof(buf)) {
-                tmp = write(fd, buf + rc, sizeof(buf) - rc);
-                if (tmp < 0)
-                    err(EXIT_FAILURE, "write");
-                rc += tmp;
-            }
+            errsv = EBADF;
+            if (write(sv[WR], (void *)&errsv, sizeof(errsv)) < 0)
+                err(EXIT_FAILURE, "write");
             break;
         default:
-            if ((fd = dup(sv[RD])) < 0)
-                err(EXIT_FAILURE, "dup");
-            close(sv[WR]);
-            close(sv[RD]);
-            rc = 0;
-            while (rc < sizeof(buf)) {
-                tmp = read(fd, buf + rc, sizeof(buf) - rc);
-                if (tmp < 0)
-                    err(EXIT_FAILURE, "read");
-                rc += tmp;
-            }
-            rc = sscanf(buf, "%*s %d\n", &errsv);
-            if (rc == 0 || rc == EOF)
-                fprintf(stderr, "failed to read message\n");
-            else
-                printf("errno: %d\n", errsv);
+            if (read(sv[RD], (void *)&errsv, sizeof(errsv)) < 0)
+                err(EXIT_FAILURE, "read");
+            fprintf(stderr, "%d: %s\n", errsv, strerror(errsv));
             break;
     }
-    if (fd != -1)
-        close(fd);
+    close(sv[WR]);
+    close(sv[RD]);
     exit(0);
 }

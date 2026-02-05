@@ -23,6 +23,10 @@
 #define OPT_BGTASK      4   // background task
 #define OPT_RDROUT      8   // redirected output
 #define OPT_RDRIN       16  // redirected input
+#define CL_PIPERD       1   // closed pipefds[RD_PIPE]
+#define CL_PIPEWR       2   // closed pipefds[WR_PIPE]
+#define CL_STDOUT       3   // closed STDOUT_FILENO
+#define CL_STDIN        4   // closed STDIN_FILENO
 #define MAX_BG_TASKS    32
 
 // shell child process/task struct
@@ -220,8 +224,9 @@ void
 spawn_tasks(task_t tasks[], int ntasks)
 {
     int pending = ntasks;
-    int rc, fd, id, pipefds[2];
+    int bpid, fds[3], pipefds[2];
     while (pending--) {
+        int cl_fds;
         if (tasks[pending].opt & OPT_PIPERD) {
             if (pipe(pipefds) < 0) {
                fprintf(stderr, "pipe: %s %s\n", tasks[pending].argv[0], 
@@ -238,29 +243,62 @@ spawn_tasks(task_t tasks[], int ntasks)
                 break;
             case 0:
                 signal(SIGINT, SIG_DFL);
-                rc = ~-1;
                 fd = ~-1;
                 if (tasks[pending].opt & OPT_PIPERD) {
-                    rc = close(STDIN_FILENO);
+                    if (close(STDIN_FILENO) < 0)
+                        err(EXIT_FAILURE, "close");
+                    else
+                        cl_fds |= CL_STDIN;
                     fd = dup(pipefds[RD_PIPE]);
-                    close(pipefds[RD_PIPE]);
-                    close(pipefds[WR_PIPE]);
-                } else if (tasks[pending].opt & OPT_RDRIN) {
+                    if (close(pipefds[RD_PIPE]) < 0)
+                        err(EXIT_FAILURE, "close");
+                    else
+                        cl_fds |= CL_PIPERD;
+                    if (close(pipefds[WR_PIPE]) < 0)
+                        err(EXIT_FAILURE, "close");
+                    else
+                        cl_fds |= CL_PIPEWR;
+                }
+                if (tasks[pending].opt & OPT_RDRIN) {
                     fd = open(tasks[pending].filename, O_RDONLY);
-                    rc = close(STDIN_FILENO);
+                    if (!(cl_fds & CL_STDIN)) {
+                        if (close(STDIN_FILENO) < 0)
+                            err(EXIT_FAILURE, "close");
+                        else
+                            cl_fds |= CL_STDIN;
+                    }
                     dup2(fd, STDIN_FILENO);
-                } else if (tasks[pending].opt & OPT_PIPEWR) {
-                    rc = close(STDOUT_FILENO);
+                }
+                if (tasks[pending].opt & OPT_PIPEWR) {
+                    if (close(STDOUT_FILENO) < 0)
+                        err(EXIT_FAILURE, "close");
+                    else
+                        cl_fds |= CL_STDOUT;
                     fd = dup(pipefds[WR_PIPE]);
-                    close(pipefds[RD_PIPE]);
-                    close(pipefds[WR_PIPE]);
-                } else if (tasks[pending].opt & OPT_RDROUT) {
+                    if (!(cl_fds & CL_PIPERD)) {
+                        if (close(pipefds[RD_PIPE]) < 0)
+                            err(EXIT_FAILURE, "close");
+                        else
+                            cl_fds |= CL_PIPERD;
+                    }
+                    if (!(cl_fds & CL_PIPEWR))
+                        if (close(pipefds[WR_PIPE]) < 0)
+                            err(EXIT_FAILURE, "close");
+                        else
+                            cl_fds |= CL_PIPEWR;
+                }
+                if (tasks[pending].opt & OPT_RDROUT) {
                     fd = open(tasks[pending].filename, O_WRONLY | O_CREAT |
                               O_TRUNC, S_IRWXU);
-                    rc = close(STDOUT_FILENO);
+                    if (!(cl_fds & CL_STDOUT)) {
+                        if (close(STDOUT_FILENO) < 0)
+                            err(EXIT_FAILURE, "close");
+                        else
+                            cl_fds |= CL_STDOUT;
+                    }
                     dup2(fd, STDOUT_FILENO);
                 }
-                if (fd < 0 || rc < 0) {
+                if (fd < 0) {
                     perror(tasks[pending].argv[0]);
                     exit(EXIT_FAILURE);
                 }
@@ -271,8 +309,8 @@ spawn_tasks(task_t tasks[], int ntasks)
                 }
             default:
                 if (tasks[pending].opt & OPT_BGTASK)
-                    if ((id = bg_list_add(&bg_list, tasks[pending].pid)) != -1)
-                        printf("[%d] %d\n", id, tasks[pending].pid);
+                    if ((bpid = bg_list_add(&bg_list, tasks[pending].pid)) != -1)
+                        printf("[%d] %d\n", bpid, tasks[pending].pid);
                 if (tasks[pending].opt & OPT_PIPEWR) {
                     close(pipefds[RD_PIPE]);
                     close(pipefds[WR_PIPE]);

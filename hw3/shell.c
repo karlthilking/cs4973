@@ -250,6 +250,7 @@ spawn_tasks(task_t tasks[], int ntasks)
                 continue;
             }
             assert(tasks[pending - 1].opt & OPT_PIPEWR);
+            // child processes automatically close pipefds on exec
             if (fcntl(pipefds[0], F_SETFD, FD_CLOEXEC) < 0 ||
                 fcntl(pipefds[1], F_SETFD, FD_CLOEXEC) < 0) {
                 fprintf(stderr, "%s, %s: %s\n",
@@ -266,18 +267,21 @@ spawn_tasks(task_t tasks[], int ntasks)
                 break;
             case 0:
                 signal(SIGINT, SIG_DFL);
-                if (tasks[pending].opt & (OPT_PIPERD | OPT_RDRIN))
+                if (tasks[pending].opt & OPT_PIPERD) {
                     if (close(STDIN_FILENO) < 0)
-                        err(EXIT_FAILURE, "close");
-                if (tasks[pending].opt & (OPT_PIPEWR | OPT_RDROUT))
-                    if (close(STDOUT_FILENO) < 0)
-                        err(EXIT_FAILURE, "close");
-                if (tasks[pending].opt & OPT_PIPERD)
+                        err(EXIT_FAILURE, "close(STDIN_FILENO)");
                     if ((fds[IX_PIPERD] = dup(pipefds[RD_PIPE])) < 0)
-                        err(EXIT_FAILURE, "dup");
-                if (tasks[pending].opt & OPT_PIPEWR)
+                        err(EXIT_FAILURE, "dup(pipefds[RD_PIPE])");
+                }
+                if (tasks[pending].opt & OPT_PIPEWR) {
+                    if (close(STDOUT_FILENO) < 0)
+                        err(EXIT_FAILURE, "close(STDOUT_FILENO)");
                     if ((fds[IX_PIPEWR] = dup(pipefds[WR_PIPE])) < 0)
-                        err(EXIT_FAILURE, "dup");
+                        err(EXIT_FAILURE, "dup(pipefds[WR_PIPE])");
+                }
+                // dup2 automatically closes newfd (second argument) so 
+                // child processes that redirect input or output do not need
+                // to call close
                 if (tasks[pending].opt & OPT_RDRIN) {
                     if ((fds[IX_RDRIN] = open(tasks[pending].filename,
                                               O_RDONLY)) < 0) {

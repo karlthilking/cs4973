@@ -11,3 +11,8 @@ check: build
 
 clean:
 	rm -f shell
+
+release: shell.c
+	$(eval CFLAGS := -O3)
+	$(CC) $(CFLAGS) -o $@ $<
+

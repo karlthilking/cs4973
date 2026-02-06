@@ -15,11 +15,10 @@
 #include <stdint.h>
 
 #define BUFSIZE         128
-#define FILENAME_LEN    64
 #define MAXARGS         32
 #define RD_PIPE         0
 #define WR_PIPE         1
-/* task options */
+/* task options so task.opt is either 0 or the logical or of one or more options */
 #define OPT_PIPERD      1   // reads from pipe
 #define OPT_PIPEWR      2   // writes to pipe
 #define OPT_BGTASK      4   // background task
@@ -34,11 +33,8 @@
 #define PIPE_UNUSED     0   // if pipefd1 and pipefd2 are not used/valid fds
 #define PIPE_USED1      1   // if pipefd1 is being used
 #define PIPE_USED2      2   // if pipefd2 is being used
-// if !(pipe_status ^ (PIPE_USED1 | PIPE_USED2)) (both are being used)
-// then the current child process needs to read from one pipe and write to the other
-// so PIPE_READ1 is set if the child process should read from pipe1 (and write to pipe
-// 2), otherwise, the child process will know to read from pipe2 and write to pipe1
-#define PIPE_READ1      4
+#define PIPE_READ1      4   // if child process has to read and write using pipes, this
+                            // flag indicates if they should use pipe1 for reading
 
 // shell child process/task struct
 typedef struct task_t {
@@ -251,7 +247,7 @@ spawn_tasks(task_t tasks[], int ntasks)
                 assert(!(pipe_status & PIPE_USED1));
                 if (pipe(pipefd1) < 0 || fcntl(pipefd1[0], F_SETFD, FD_CLOEXEC) < 0 ||
                     fcntl(pipefd1[1], F_SETFD, FD_CLOEXEC) < 0) {
-                    fprintf(stderr, "%s %s: %s\n", 
+                    fprintf(stderr, "pipe %s %s: %s\n", 
                             tasks[pending].argv[0],
                             tasks[--pending].argv[0], 
                             strerror(errno));
@@ -263,7 +259,7 @@ spawn_tasks(task_t tasks[], int ntasks)
                 assert(!(pipe_status & PIPE_USED2) && (pipe_status & PIPE_USED1));
                 if (pipe(pipefd2) < 0 || fcntl(pipefd2[0], F_SETFD, FD_CLOEXEC) < 0 ||
                     fcntl(pipefd2[1], F_SETFD, FD_CLOEXEC) < 0) {
-                    fprintf(stderr, "%s %s: %s\n", 
+                    fprintf(stderr, "pipe %s %s: %s\n", 
                             tasks[pending].argv[0], 
                             tasks[--pending].argv[0], 
                             strerror(errno));
@@ -284,22 +280,20 @@ spawn_tasks(task_t tasks[], int ntasks)
                 signal(SIGINT, SIG_DFL);
                 if (tasks[pending].opt & OPT_PIPERD) {
                     if (pipe_status & PIPE_READ1) {
-                        if (dup2(pipefd1[RD_PIPE], STDIN_FILENO) < 0) {
+                        if (dup2(pipefd1[RD_PIPE], STDIN_FILENO) < 0)
                             err(EXIT_FAILURE, "dup2");
-                        }
                     } else if (dup2(pipefd2[RD_PIPE], STDIN_FILENO) < 0) {
                         err(EXIT_FAILURE, "dup2");
                     }
                 }
                 if (tasks[pending].opt & OPT_PIPEWR) {
-                    if (!(pipe_status & PIPE_USED1))
-                        dup2(pipefd2[WR_PIPE], STDOUT_FILENO);
-                    else if (!(pipe_status & PIPE_USED2))
-                        dup2(pipefd1[WR_PIPE], STDOUT_FILENO);
-                    else if (pipe_status & PIPE_READ1)
-                        dup2(pipefd2[WR_PIPE], STDOUT_FILENO);
-                    else
-                        dup2(pipefd1[WR_PIPE], STDOUT_FILENO);
+                    if (!(pipe_status ^ (PIPE_USED1 | PIPE_USED2)) || 
+                        !(pipe_status & PIPE_USED2)) {
+                        if (dup2(pipefd1[WR_PIPE], STDOUT_FILENO) < 0)
+                            err(EXIT_FAILURE, "dup2");
+                    } else if (dup2(pipefd2[WR_PIPE], STDOUT_FILENO) < 0) {
+                        err(EXIT_FAILURE, "dup2");
+                    }
                 }
                 // dup2 automatically closes newfd (second argument) so 
                 // child processes that redirect input or output do not need
@@ -330,7 +324,8 @@ spawn_tasks(task_t tasks[], int ntasks)
                     if ((bgid = bg_list_add(&bg_list, tasks[pending].pid)) != -1)
                         printf("[%d] %d\n", bgid, tasks[pending].pid);
                 if (tasks[pending].opt & OPT_PIPEWR) {
-                    if (!((pipe_status & PIPE_READ1) || PIPE_USED2)) {
+                    if (!(pipe_status ^ (PIPE_USED1 | PIPE_USED2)) ||
+                        !(pipe_status & PIPE_USED2)) {
                         close(pipefd1[RD_PIPE]);
                         close(pipefd1[WR_PIPE]);
                         pipe_status ^= PIPE_USED1;
@@ -340,7 +335,7 @@ spawn_tasks(task_t tasks[], int ntasks)
                         pipe_status ^= PIPE_USED2;
                     }
                 }
-                if ((tasks[pending].opt & OPT_PIPERD) && pipe_status & PIPE_READ1)
+                if ((tasks[pending].opt & OPT_PIPERD) && (pipe_status & PIPE_READ1))
                     pipe_status ^= PIPE_READ1;
                 break;
         }

@@ -3,7 +3,13 @@ what works:
     - pipes
     - output and input redirection
     - background jobs
-    - handling SIGINT to kill shell commands but not the shell process
-note:
-    - make check does not test sending a SIGINT to a shell command
+    - handling SIGINT to kill shell commands but not the shell
+      process itself
 
+additional extensions:
+    - commands with multiples pipes, combinations of redirection,
+      pipes and backgrounds, etc.
+    - shell prints info about background tasks
+        - i.e. numbering background tasks and background job
+          pids (similar to bash)
+        - displays exit info when background jobs complete

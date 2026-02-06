@@ -1,18 +1,28 @@
 CC = gcc
-CFLAGS = -g3 -O0
+CFLAGS = -fsanitize=address -fsanitize=leak
 
-build: shell
+define build 
+	$(CC) $(CFLAGS) -o shell shell.c
+	@echo '$(CC) $(CFLAGS) -o shell shell.c'
+endef
 
-shell: shell.c
-	$(CC) $(CFLAGS) -o $@ $<
+debug:
+	$(eval CFLAGS += -Wall -Wextra -Werror -g3 -O0)
+	@$(call build)
 
-check: build
+release:
+	$(eval CFLAGS := -O3)
+	@$(call build)
+
+build:
+	$(eval CFLAGS := -g3 -O0)
+	@$(call build)
+
+check:
+	@$(call build)
 	./shell
 
 clean:
 	rm -f shell
 
-release: shell.c
-	$(eval CFLAGS := -O3)
-	$(CC) $(CFLAGS) -o $@ $<
 

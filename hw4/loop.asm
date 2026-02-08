@@ -12,10 +12,10 @@ main:
 
 loop:
     addi t0, t0, 1
-    li a7, 4        # 4: print string
+    li a7, 4        
     la a0, loopmsg
     ecall
-    li a7, 1        # 1: print int
+    li a7, 1        
     mv a0, t0       
     ecall
     li a7, 4

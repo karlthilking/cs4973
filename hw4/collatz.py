@@ -1,5 +1,5 @@
 def collatz(n):
-    return f(n, 1)
+    return f(n,1)
 
 def f(n, x):
     if n==1:

@@ -1,7 +1,7 @@
 build: hw4.out collatz.out
 
 hw4.out: hw4.asm rars1_6.jar
-	java -jar ./rars1_6.jar hw4.asm > hw4.out
+	java -jar ./rars1_6.jar ./hw4.asm > hw4.out
 
 collatz.out: collatz.py
 	python3 collatz.py > collatz.out

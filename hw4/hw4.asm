@@ -110,7 +110,7 @@ fodd:
 
 # iterative collatz function
 # collatziter(n):
-#   for(x=0;; x++)
+#   for(x=1;; x++)
 #       if n==1:    break
 #       if n%2==0:  n=n/2
 #       if n%2==1:  n=3*n+1

@@ -24,23 +24,23 @@ loop:
     la      a0, out2
     ecall
     mv      a0, s0
-    call    fib
+    call    fibiter
     li      a7, 1
     ecall
     li      a7, 4
     la      a0, newline
     ecall
     addi    s0, s0, 1
-    blt     s0, s1, loop
+    ble     s0, s1, loop
 
 end:
     li      a7, 10
     ecall
 
-fib:
+fibiter:
     beqz    a0, fib0
-    li      t0, 2
-    blte    a0, t0, fiblte2
+    li      t0, 3
+    blt     a0, t0, fiblte2
     addi    sp, sp, -8
     sw      s2, 0(sp)
     sw      s3, 4(sp)
@@ -68,4 +68,6 @@ fiblte2:
     li      a0, 1
     ret
     
-    
+
+
+

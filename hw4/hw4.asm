@@ -3,7 +3,7 @@
 .data
 out1: 	        .asciz "collatz("
 out2: 	        .asciz "): "
-newline: 		.asciz "\n"
+newline: 	.asciz "\n"
 
 .text
 main:
@@ -33,7 +33,7 @@ loop:
 	la 	a0, newline
 	ecall
 	addi	s0, s0, 1       	# i++
-	blt	s0, s1, loop   	# if i < 100 continue
+	blt	s0, s1, loop   	        # if i < 100 continue
 
 # exit(0);
 exit:
@@ -43,12 +43,12 @@ exit:
 # collatz(n):
 #       return f(n,1)
 collatz:
-	addi	sp, sp, -4            # allocate space for ra
-	sw	ra, 0(sp)             # store ra
+	addi	sp, sp, -4              # allocate space for ra
+	sw	ra, 0(sp)               # store ra
 	li	a1, 1                   
 	call	f
-	lw	ra, 0(sp)             # restore ra
-	addi	sp, sp, 4             # deallocate stack
+	lw	ra, 0(sp)               # restore ra
+	addi	sp, sp, 4               # deallocate stack
 	ret				# return
 
 # f(n,x):

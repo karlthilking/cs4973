@@ -1,8 +1,8 @@
 .global main
 
 .data
-out1: 	.asciz "collatz("
-out2: 	.asciz "): "
+out1: 	        .asciz "collatz("
+out2: 	        .asciz "): "
 newline: 	.asciz "\n"
 
 .text

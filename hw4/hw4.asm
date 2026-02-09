@@ -3,15 +3,15 @@
 .data
 out1: 	        .asciz "collatz("
 out2: 	        .asciz "): "
-newline: 	.asciz "\n"
+newline: 		.asciz "\n"
 
 .text
 main:
-	addi 	sp, sp, -8      # allocate space for two ints
+	addi 	sp, sp, -8		# allocate space for two ints
 	sw	s0, 0(sp)       
 	sw	s1, 4(sp)
-	li	s0, 1           # loop variable i=1
-	li	s1, 100         # loop condition i<100
+	li	s0, 1           	# loop variable i=1
+	li	s1, 100         	# loop condition i<100
 
 # for (int i=1; i<100; i++)
 #       printf("collatz(%d): %d\n", i, collatz(i));
@@ -32,8 +32,8 @@ loop:
 	li	a7, 4
 	la 	a0, newline
 	ecall
-	addi	s0, s0, 1       # i++
-	blt	s0, s1, loop    # if i < 100 continue
+	addi	s0, s0, 1       	# i++
+	blt	s0, s1, loop   	# if i < 100 continue
 
 # exit(0);
 exit:
@@ -43,13 +43,13 @@ exit:
 # collatz(n):
 #       return f(n,1)
 collatz:
-	addi	sp, sp, -4              # allocate space for ra
-	sw	ra, 0(sp)               # store ra
+	addi	sp, sp, -4            # allocate space for ra
+	sw	ra, 0(sp)             # store ra
 	li	a1, 1                   
 	call	f
-	lw	ra, 0(sp)               # restore ra
-	addi	sp, sp, 4               # deallocate stack
-	ret                             # return
+	lw	ra, 0(sp)             # restore ra
+	addi	sp, sp, 4             # deallocate stack
+	ret				# return
 
 # f(n,x):
 #       if n == 1:      return x

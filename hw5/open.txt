@@ -1,0 +1,24 @@
+namex("/usr/bin/ls", ...)
+
+- first, because the pathname is prefixed with '/' (root directory), the
+  inode pointer will be initialized to the root directory with a call to
+  iget() that finds or creates a cache entry and increments its reference
+  count
+
+- while((path = skipelem(path, name)) != 0) will produce the following:
+    - 0:
+        - path = bin/ls, name = usr, ip -> '/'
+        - next = dirlookup(ip, name, 0); next = inode pointer to '/usr'
+        - ip = next (now inode pointer to '/usr')
+    - 1:
+        - path = ls, name = bin, ip -> '/usr'
+        - next = dirlookup(ip, name, 0); next = inode pointer to '/usr/bin'
+        - ip = next (now inode pointer to '/usr/bin')
+    - 2:
+        - path = null, name = ls, ip -> '/usr/bin'
+        - next = dirlookup(ip, name, 0); next = inode pointer to '/usr/bin/ls'
+        - ip = next (now inode pointer to '/usr/bin/ls')
+
+- while loop exits because path == null so skipelem returns 0
+- after exiting while loop, the function returns ip (pointer to struct inode)
+  which corresponds to the inode information of the path '/usr/bin/ls'

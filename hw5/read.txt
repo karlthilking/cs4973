@@ -1,0 +1,36 @@
+read.txt
+
+int readi(struct inode *, char *, uint, uint)
+
+error checking:
+    - if(off > ip->size || off + n < off) 
+    
+    - this checks to see if the current file offset is greater than the size
+      of the file or if the call to readi attempts to read an amount of bytes
+      that would overflow the offset by adding off + n (in which case 
+      advancing the offset by n decreases the value of off which would be 
+      problematic)
+
+range checking:
+    - if(off + n > ip->size)
+        n = ip->size - off; 
+    - this ensures that if the the requested number of bytes to read (n) goes 
+      beyond the size of the file, decrease n in order to only read the 
+      remaining contents of the file
+
+for loop:
+    - for(tot=0; tot<n; tot+=m, off+=m, dst+=m)
+    - this loop incrementally reads all n bytes from the file (tracking the
+      current number of bytes read in tot), while advancing the offset (the
+      position in the file to read from) and the destination pointer (the
+      buffer to read the contents into)
+    - the reading is done in two steps, first calling bread() to read from a
+      block into the struct buf *bp, and then copying the contents read into
+      bp into the destination buffer pointed to by char *dst
+
+extra detail:
+    - the actual file offset is manually updated in fileread() by incrementing
+      f->off (offset field of the struct file *f) by the return value of readi
+      which is the number of bytes read; the off variable used in readi() is 
+      thus only used as a temporary
+

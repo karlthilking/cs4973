@@ -1,3 +1,5 @@
+open.txt
+
 namex("/usr/bin/ls", ...)
 
 - first, because the pathname is prefixed with '/' (root directory), the
@@ -5,10 +7,23 @@ namex("/usr/bin/ls", ...)
   iget() that finds or creates a cache entry and increments its reference
   count
 
+- the function skipelem() that is called at the beginning of each while loop
+  iteration will copy the name of the first directory of a path into 'name'
+  and return the remaining path
+    - e.g. skipelem('/usr/bin/ls') should return 'bin/ls' and set name to
+      'usr'
+
+- this provides the functionality of iteratively advancing the pointer to a
+  struct inode 'ip' to point to the inode of every directory/subdirectory
+  until it points to the the file/directory at the end of the complete path,
+  such that return 'ip' is now the correct inode for the path name
+
 - while((path = skipelem(path, name)) != 0) will produce the following:
     - 0:
         - path = bin/ls, name = usr, ip -> '/'
         - next = dirlookup(ip, name, 0); next = inode pointer to '/usr'
+            - dirlookup() lookups the entry 'name' in the directory pointed to 
+              by ip
         - ip = next (now inode pointer to '/usr')
     - 1:
         - path = ls, name = bin, ip -> '/usr'

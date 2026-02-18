@@ -1,0 +1,67 @@
+files.txt
+
+sources: file.h, file.c, proc.h, sysfile.c
+
+i.  fd
+    - a file descriptor or fd, is an index into a process' array of open files
+    - in the definition of struct proc, the structure representing a process
+      (in proc.h), there is a field ofile which is an array of pointers to
+      struct files; thus, getting the file structure associated with a specific
+      file descriptor could be done with proc->ofile[fd] 
+        - an example of this is demonstrated in sysfile.c in the function
+          argfd which receives a integer argument for a file descriptor
+          and returns both the file descriptor and corresponding struct file
+          by setting f=proc->ofile[fd] (eventually setting the caller's
+          struct file **pf to point to struct file * so they can use the
+          file)
+            - this function is shown to be useful by sys_close() in
+              sysfile.c which needs set proc->ofile[fd] to null as well as
+              call fileclose() on the file structure
+    - at a high level, a file descriptor allows you to use an index to perform
+      file control and file operations on a file structure by using the index
+      it can be addressed with
+
+ii. struct file
+    - the file data structure (struct file), located in file.h, contains the
+      underlying information associated with a file, including type, 
+      reference count, permissions, an inode pointer, offset, etc.
+    - the fields within a struct file allow correctly performing operations
+      on a file such as reading; this is shown by fileread() in file.c
+        - fileread(struct file *, char *, int n) uses a pointer to a struct
+          file, a buffer, and a size in bytes in order to read data from a
+          file into a buffer
+        - some examples of relevant fields stored in a struct file that allow
+          for reading from a file are the following:
+            - permissions field ensures the read is legal
+            - type distinguishes which mechanism the read should utilize
+            - inode pointer is needed (if type == FD_INODE) for the
+              underlying call to readi() 
+            - offset field ensures that reading occurs from the correct
+              offset within the file, and is updated properly for possible
+              future reads
+    - the information stored in the file structure enforce that file operation
+      mechanisms work as intended
+
+iii. struct inode
+    - the inode structure (also located in file.h) contains metadata about a
+      file on disk, including the file type, size, number of links, and also
+      contains additional metadata that isn't stored on disk, such as a 
+      reference count and a flag variable
+    - one example that highlights the semantic differences between a struct 
+      file and a struct inode is demonstrated in sys_open() in sysfile.c
+        - sys_open() takes a string pathname as its first argument and first,
+          retrieves the corresponding inode pointer by eventually calling 
+          namex() before allocating a new file structure which contains the
+          inode pointer as one of its fields (among other fields that are
+          initialized accordingly)
+            - this routine demonstrates that a struct file is a layer below
+              a file descriptor but a layer above a struct inode because an
+              inode can always be accessed either by reading from disk or 
+              from an inode cache, whereas to interact with a file using
+              struct file, you must first access an inode in order to 
+              initialize the file structure
+    - an inode structure serves the purpose of holding important metadata 
+      about files on disk that enable the higher level routines that operate
+      on a struct file or a file descriptor 
+             
+

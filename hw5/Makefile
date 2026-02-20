@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -g3 -O0 -Wall -Werror
+CFLAGS = -g3 -O0
 
 all: mysh myls inode
 

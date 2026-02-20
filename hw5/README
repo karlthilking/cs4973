@@ -1,0 +1,7 @@
+Everything works
+
+note:
+    - make check compares the number of edited lines when comparing 
+      'mysh.c' and 'myls.c' to xv6-sh.c and xv6-ls.c
+    - the Makefile also includes build and clean targets
+

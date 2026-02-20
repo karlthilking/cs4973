@@ -1,7 +1,7 @@
 CC = gcc
 CFLAGS = -g3 -O0
 
-all: mysh myls inode
+build: mysh myls inode
 
 mysh: mysh.c
 	$(CC) $(CFLAGS) -o $@ $<

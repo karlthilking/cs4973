@@ -1,0 +1,49 @@
+#include <unistd.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <err.h>
+#include <stdint.h>
+
+#define RD_MSG  "read from"
+#define WR_MSG  "wrote to"
+
+typedef struct {
+    unsigned long addr;
+    unsigned char m;
+    unsigned char v;
+} cache_line_t;
+
+int
+main(int argc, char *argv[])
+{
+    if (argc < 5) {
+        fprintf(stderr, "Usage: ./cache-simulator --data-block-size [NUMBER]"
+                        " --cache-size [NUMBER]\n");
+        _exit(1);
+    }
+
+    const uint8_t data_block_size = stoi(argv[2]);
+    const uint16_t cache_size = stoi(argv[4]);
+    const uint16_t num_cache_lines = cache_size / data_block_size;
+
+    cache_line_t cache_lines[num_cache_lines];
+    for (int i = 0; i < num_cache_lines; ++i)
+        cache_lines[i].v = 0x0; // mark each cache line as invalid initially
+
+    char *line = NULL;
+    size_t sz = 0;
+    char rw;
+    unsigned long addr;
+
+    while (getline(&line, &sz, stdin) > 0 && !feof(stdin)) {
+        if (sscanf(line, "%c:%lx\n", &rw, &addr) < 2)
+            err(EXIT_FAILURE, "sscanf");
+        int i;
+        for (i = 0; i < num_cache_lines; ++i) {
+            /* cache hit */
+            if (cache_lines[i].addr == addr && cache_lines[i].v)
+        }
+        printf("%s %lx\n", (rw == 'r') ? RD_MSG : WR_MSG, addr);
+    }
+    _exit(0);
+}

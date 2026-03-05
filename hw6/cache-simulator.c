@@ -4,13 +4,11 @@
 #include <err.h>
 #include <stdint.h>
 
-#define RD_MSG  "read from"
-#define WR_MSG  "wrote to"
-
 typedef struct {
     unsigned long addr;
     unsigned char m;
     unsigned char v;
+    unsigned int use;
 } cache_line_t;
 
 int
@@ -34,16 +32,47 @@ main(int argc, char *argv[])
     size_t sz = 0;
     char rw;
     unsigned long addr;
-
+    
+    int iter = 0;
     while (getline(&line, &sz, stdin) > 0 && !feof(stdin)) {
         if (sscanf(line, "%c:%lx\n", &rw, &addr) < 2)
             err(EXIT_FAILURE, "sscanf");
         int i;
         for (i = 0; i < num_cache_lines; ++i) {
             /* cache hit */
-            if (cache_lines[i].addr == addr && cache_lines[i].v)
+            if (!cache_lines[i].v) {
+                cache_lines[i].addr = addr;
+                cache_lines[i].v = 0x1;
+                cache_lines[i].m = 0x0;
+                cache_lines[i].use = iter++;
+                break;
+            } else if (cache_lines[i].addr == addr && cache_lines[i].v)
+                if (rw == 'r') {
+                    printf("Read from %lx\n", addr);
+                } else if (rw == 'w') {
+                    if (!cache_lines[i].m)
+                        cache_lines[i].m = 0x1;
+                    printf("Wrote to %lx\n", addr);
+                }
+                cache_lines[i].use = iter++;
+                break;
+            }
+
         }
-        printf("%s %lx\n", (rw == 'r') ? RD_MSG : WR_MSG, addr);
+        /* cache miss, need to evict a cache line now */
+        if (i >= num_cache_lines) {
+            int lru = INT_MAX, lru_ix = -1;
+            for (i = 0; i < num_cache_lines; ++i) {
+                if (cache_lines[i].use < lru) {
+                    lru = cache_lines[i].use;
+                    lru_ix = i;
+                }
+            }
+            cache_lines[lru_ix].addr = addr;
+            cache_lines[lru_ix].use = iter++;
+            cache_lines[lru_ix].m = 0x0;
+            cache_lines[lru_ix].v = 0x1;
+        }
     }
     _exit(0);
 }

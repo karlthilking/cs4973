@@ -10,4 +10,4 @@ cache-simulator: cache-simulator.c
 	$(CC) $(CFLAGS) -o $@ $<
 
 clean:
-	rm -f cache-simulator *-llvm
+	rm -f cache-simulator *-llvm *.bc

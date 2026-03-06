@@ -1,0 +1,51 @@
+
+Questions:
+- should a cache line be marked modified if it is first loaded in because a 
+  write is being performed?
+- do cpu caches ever try to remove cache lines in advance to maintain 
+  a threshold of availability
+- should a cache line be aligned to the data block size (e.g. multiple of 64)
+  or simply aligned to the word size (multiple of 4 bytes)
+    - i.e. if accessing a word at virtual address 0x00000048 (72) should the 
+      cache line start at 0x00000040 (64; aligned to size of cache line) or 
+      0x00000048 (72; word aligned address)
+
+Notes:
+- experiment with making the cache line struct the size of an actual cache
+  line header with logical operators for extracting modified and valid bits
+- experiment with use bit for lru approximation and clock algorithm
+    - experiment with preferring to evict non-modified cache lines
+- compare different approaches lru, lru approximation, fifo, random with
+  results
+
+Direct-mapped Cache
+- low bits = index into cache, high bits = tag bits to avoid collision
+- example parameters: 32 bit address, 64 byte blocks, 32KB cache, 512 blocks
+    - 17 bits to address tag, 9 to address one block, 6 bits to address byte in block
+- another example: 64kb cache, 4 byte (word) blocks, 32 bit address (assume
+  only tag bits and a valid bit)
+    - 64KB = 2^16, 4 bytes = 2^2 -> 2^14 total blocks (16K)
+    - 16 tag bits, 14 index bits, 2 offset bits
+    - each block has 32 bits (word) of data + tag bits + valid bit = 49 bits
+    - data cache size in bits = (bits/blocks) * blocks = 49 * 2^14 = 784 Kbits
+
+Bit Representation
+- tag bits (upper portion of address)
+- lower portion of address uses log_2(number of cache blocks) bits (index bits)
+    - e.g. 32KB cache size, 64B data block size -> 32k = 2^15, 64b = 2^6 ->
+      cache fits 2^9 (512) cache lines/blocks -> need 9 bits for indexing
+      into the cache
+    - # of tag bits = # of bits in virtual address - # of index bits
+- valid bit
+    - 0: invalid, 1: valid address
+- modified bit
+    - 
+
+Write-back policy:
+    - modified blocks are written to main memory when evicted
+
+Cache Miss Control Flow:
+    - send address to higher memory
+    - write cache entry, put data into data portion, write tag bits, set valid
+          
+

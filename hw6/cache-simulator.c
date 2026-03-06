@@ -1,5 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
+#include <limits.h>
 #include <err.h>
 #include <assert.h>
 
@@ -20,16 +22,16 @@ main(int argc, char *argv[])
     }
     
     /* cache parameters */
-    const uint8_t cache_line_size   = stoi(argv[2]);
-    const uint16_t cache_size       = stoi(argv[4]);
+    const uint8_t cache_line_size   = atoi(argv[2]);
+    const uint16_t cache_size       = atoi(argv[4]);
     const uint16_t n_cache_lines    = cache_size / cache_line_size;
     
     /* cache lines */
-    cache_line_t cache_lines[num_cache_lines];
+    cache_line_t cache_lines[n_cache_lines];
 
     /* mark each cache line as invalid initially */
-    for (int i = 0; i < num_cache_lines; ++i)
-        cache_lines[v] = 0;
+    for (int i = 0; i < n_cache_lines; ++i)
+        cache_lines[i].v = 0;
     
     char rw;
     unsigned long addr;

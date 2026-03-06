@@ -9,6 +9,8 @@ Questions:
     - i.e. if accessing a word at virtual address 0x00000048 (72) should the 
       cache line start at 0x00000040 (64; aligned to size of cache line) or 
       0x00000048 (72; word aligned address)
+- fully-associative caches:
+    - do all fully-associative caches have a comparator per cache entry
 
 Notes:
 - experiment with making the cache line struct the size of an actual cache
@@ -29,6 +31,26 @@ Direct-mapped Cache
     - each block has 32 bits (word) of data + tag bits + valid bit = 49 bits
     - data cache size in bits = (bits/blocks) * blocks = 49 * 2^14 = 784 Kbits
 
+Set-associative Cache
+- an N-way associative cache has N cache entries where it can place a block,
+  and has a number of sets each containing N blocks
+- each blocks includes an address tag
+- address decomposes into -> | tag | index | offset |
+- Example 32KB L1D cache, 64 byte block size, 8 way associative
+    - (2^15)/(2^6) data blocks = 512 blocks -> 64 sets of 8 blocks
+    - index = address % number of sets
+- Example 4K blocks (2^12), 4 word block size (16 bytes), 32 bit address,
+  4 way associative
+    - total size: 2^12 * 2^4 bytes = 2^6 KB = 64KB
+    - total sets: number of blocks / associativity = 1024
+    - 10 bits needed to index into a set, 4 bits to select byte in block -> 
+      18 bits for tag
+    - total tag bits = tag bits * associativity * sets = 18*4*1024 = 72Kbits
+
+Fully-associative Cache
+- no index bits, entire address ^ (offset bit mask) is used
+    
+
 Bit Representation
 - tag bits (upper portion of address)
 - lower portion of address uses log_2(number of cache blocks) bits (index bits)
@@ -39,6 +61,8 @@ Bit Representation
 - valid bit
     - 0: invalid, 1: valid address
 - modified bit
+    - 
+- use / reference bit (useful in LRU eviction)
     - 
 
 Write-back policy:

@@ -6,11 +6,16 @@
 #include <math.h>
 #include <assert.h>
 
-typedef struct {
-    unsigned long   tag;    // start address held by cache line
-    char            m;      // modified
-    char            v;      // valid
-    unsigned        lu;     // time of last use
+typedef struct cache_line_hdr {
+    unsigned long   tag : 61;   // tag bits
+    unsigned int    m   : 1;    // modified bit
+    unsigned int    v   : 1;    // valid bit
+    unsigned int    u   : 1;    // use bit
+} cache_line_hdr_t;
+
+typedef struct cache_line {
+    cache_line_hdr_t    hdr;
+    char                data[CACHE_LINE_SIZE];
 } cache_line_t;
 
 /* cache parameters */
@@ -37,9 +42,7 @@ verbose(cache_line_t *cache_lines)
     
     n_offbits   = log2i(cache_line_size);   // log2(block size) offset bits
     n_tagbits   = 64 - n_offbits;           // rest of bits used for tag
-    tagbitmask  = 0xFFFFFFFFFFFFFFFF;       
-    for (int i = 0; x = 1; i < n_offbits; ++i, x <<= 1)
-        tagbitmask ^= x; // unset offset bits to mask tag bits
+    tagbitmask  = ~((1 << n_offbits) - 1)
 
     char            rw;     // read or write
     unsigned long   addr;   // generated virtual address
@@ -81,7 +84,7 @@ verbose(cache_line_t *cache_lines)
                         else
                             printf("no write back (unmodified)\n");
                     }
-                    cache_lines[i].tag = (addr & tagbitmask) >> n_offbits;
+                    cache_lines[i].tag = addr >> n_offbits;
                     cache_lines[i].v = 1;
                     cache_lines[i].u = 1;
                     printf("Cache Miss: ");
@@ -102,10 +105,11 @@ verbose(cache_line_t *cache_lines)
     return 0;
 }
 
-void
-summary()
+int
+summary(const cache_line_t *cache_lines)
 {
-    
+
+    return 0;
 }
 
 int

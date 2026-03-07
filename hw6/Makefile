@@ -1,13 +1,13 @@
-CC = gcc
 CFLAGS = -g3 -O0
+LLVMFLAGS = -emit-llvm -S
 
-build: cache-simulator
+build: cache-simulator 01_test_scan.ll 02_test_matmul.ll 03_test_quicksort.ll
 
 cache-simulator: cache-simulator.c
-	$(CC) $(CFLAGS) -o $@ $<
+	gcc $(CFLAGS) -o $@ $<
 
-%-llvm: %.c
-	$(CC) $(CFLAGS) -o $@ $<
+%.ll: %.c
+	clang $(LLVMFLAGS) -S $<
 
 clean:
-	rm -f cache-simulator *-llvm *.bc
+	rm -f cache-simulator *-llvm *.ll

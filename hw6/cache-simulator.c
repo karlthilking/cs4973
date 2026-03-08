@@ -78,17 +78,18 @@ run_simulation(cache_line_t *cache_lines, const uint8_t cache_line_size,
                 break; // found address in cache; break from loop
             }
         }
-        // i == n_cache_lines (traversed all lines), then cache miss
+        // i == n_cache_lines (traversed all lines) -> address not cached
         // either replace an invalid line or evict a line if all are valid
         if (i == n_cache_lines) {
-            ++n_misses;
+            ++n_misses; // increment miss count
             printf("cache miss: ");
             for (i = 0;; i = (i + 1) % n_cache_lines) {
-                // found invalid cache line (free to replace)
-                if (!(cache_lines[i].hdr & V)) {
+                // if the valid and used bit are not set, the line can be
+                // replaced / evicted
+                if (!(cache_lines[i].hdr & V && cache_lines[i].hdr & U)) {
                     assert(mode == 'r' || mode == 'w');
-                    // set cache line tag bits to correspondig tag of
-                    // address, set valid bit, set use bit
+                    uint64_t evicted = cache_lines[i].hdr;
+                    
                     cache_lines[i].hdr = (addr >> (n_offbits - n_infobits));
                     cache_lines[i].hdr |= V;
                     cache_lines[i].hdr |= U;
@@ -98,45 +99,39 @@ run_simulation(cache_line_t *cache_lines, const uint8_t cache_line_size,
                         printf("write to %lx, ", addr);
                         cache_lines[i].hdr |= M;
                     }
-                    printf("replaced invalid line\n");
-                    break; // replaced invalid line, break from loop
-                } else if (!(cache_lines[i].hdr & U)) {
-                    assert(mode == 'r' || mode == 'w');
-                    // save evicted cache line info
-                    uint64_t evicted = cache_lines[i].hdr;
-                    
-                    cache_lines[i].hdr = (addr >> (n_offbits - n_infobits));
-                    cache_lines[i].hdr |= V;
-                    cache_lines[i].hdr |= U;
-                    if (mode == 'r')
-                        printf("read to %lx\n", addr);
-                    else {
-                        printf("write to %lx\n", addr);
-                        cache_lines[i].hdr |= M;
-                    }
-                    printf("evicted line at %lx, ", 
-                           (evicted >> n_infobits) << n_offbits);
-                    if (evicted & M)
-                        printf("writing back... (modified)\n");
-                    else
-                        printf("no write back (unmodified)\n");
-                    break;
+                    // if line was valid (evicted)
+                    if (evicted & V) {
+                        printf("evicted line at %lx, ",
+                               (evicted >> n_infobits) << n_offbits);
+                        // print whether or not the line had to be
+                        // written back to higher memory (was modified)
+                        if (evicted & M)
+                            printf("writing back... (modified)\n");
+                        else
+                            printf("no write back (unmodified)\n");
+                    } else
+                        printf("replaced invalid line\n");
+                    break; // exit loop after replacing a line
                 } else {
-                    // if line is valid and use bit is set, unset use bit
-                    // for clock eviction
+                    assert(cache_lines[i].hdr & V);
+                    // unset use bit during eviction
                     cache_lines[i].hdr &= ~U;
                 }
             }
         }
     }
     int n_total = n_hits + n_misses;
-    // todo: display info about total hits and misses + other summary info
+    printf("total loads or stores:\t%d\n", n_total);
+    printf("total hits:\t\t%d\n", n_hits);
+    printf("total misses:\t\t%d\n", n_misses);
+    printf("percent hits:\t\t%f\n", (float)(n_hits) / (float)(n_total));
     return 0;
 }
 
 int
 main(int argc, char *argv[])
 {
+    assert(sizeof(cache_line_t) == 64);
     if (argc < 5) {
         fprintf(stderr, "Usage: ./cache-simulator --data-block-size [NUMBER]"
                         " --cache-size [NUMBER]\n");
@@ -154,10 +149,7 @@ main(int argc, char *argv[])
     n_cache_lines   = cache_size / cache_line_size;
     
     cache_line_t cache_lines[n_cache_lines];
-    for (int i = 0; i < n_cache_lines; ++i) {
-        cache_lines[i].hdr &= ~V; // unset all valid bits
-        assert(!(cache_lines[i].hdr & V));
-    }
+    memset(cache_lines, 0, sizeof(cache_line_t) * n_cache_lines);
 
     if (run_simulation(cache_lines, cache_line_size, 
                        cache_size, n_cache_lines) < 0) {

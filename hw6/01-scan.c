@@ -1,7 +1,10 @@
 #include <time.h>
 #include <stdlib.h>
 
-int *A;
+#define CACHE_SIZE 4096
+#define BLOCK_SIZE 128
+
+static int A[CACHE_SIZE + BLOCK_SIZE];
 
 int
 main(int argc, char *argv[])
@@ -11,20 +14,15 @@ main(int argc, char *argv[])
      *  Allocate array which is the size of the cpu cache plus one cache line
      *  and scan through array in order to invoke lru corner case behavior
      */
-    const int n_epochs      = (argc > 1) ? atoi(argv[1]) : 10;
-    const int block_size    = 128;
-    const int cache_size    = 4096;
-    const int n_cache_lines = cache_size / block_size;
+    const int n_epochs      = (argc > 1) ? atoi(argv[1]) : 100;
+    const int n_cache_lines = CACHE_SIZE / BLOCK_SIZE;
     
-    A = malloc(cache_size + block_size);
-    
-    const int n_iterations  = cache_size / sizeof(int);
-    const int step          = block_size / sizeof(int);
+    const int n_iterations  = CACHE_SIZE / sizeof(int);
+    const int step          = BLOCK_SIZE / sizeof(int);
     
     for (int epoch = 0; epoch < n_epochs; ++epoch)
         for (int i = 0; i < n_iterations; i += step)
             A[i] = rand() % 64;
 
-    free(A);
     exit(0);
 }

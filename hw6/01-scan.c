@@ -22,7 +22,7 @@ main(int argc, char *argv[])
     
     for (int epoch = 0; epoch < n_epochs; ++epoch)
         for (int i = 0; i < n_iterations; i += step)
-            A[i] = rand() % 64;
+            A[i]++;
 
     exit(0);
 }

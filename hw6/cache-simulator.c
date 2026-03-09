@@ -58,14 +58,19 @@ run_simulation(cache_line_t *cache_lines, const uint8_t cache_line_size,
     unsigned long   addr;   // address (64 bit) loaded or stored to
     
     while (!feof(stdin)) {
-        if (scanf("%c%lx\n", &mode, &addr) < 2)
+        if (scanf("%c%lx\n", &mode, &addr) < 2) {
+            fprintf(stderr, "scanf failed\n");
             return -1;
+        }
         int i;
         for (i = 0; i < n_cache_lines; ++i) {
             // if tag bits match and valid bit is set -> cache hit
             if ((cache_lines[i].hdr >> n_infobits) == (addr >> n_offbits) &&
                 (cache_lines[i].hdr & V)) {
-                assert(mode == 'r' || mode == 'w');
+                if (!(mode == 'r' || mode == 'w')) {
+                    fprintf(stderr, "Unexecpted mode: %c\n", mode);
+                    return -1;
+                }
                 printf("cache hit: ");
                 cache_lines[i].hdr |= U; // set used bit
                 if (mode == 'r')
@@ -87,7 +92,10 @@ run_simulation(cache_line_t *cache_lines, const uint8_t cache_line_size,
                 // if the valid and used bit are not set, the line can be
                 // replaced / evicted
                 if (!(cache_lines[i].hdr & V && cache_lines[i].hdr & U)) {
-                    assert(mode == 'r' || mode == 'w');
+                    if (!(mode == 'r' || mode == 'w')) {
+                        fprintf(stderr, "Unrecognized mode: %c\n", mode);
+                        return -1;
+                    }
                     uint64_t evicted = cache_lines[i].hdr;
                     
                     cache_lines[i].hdr = (addr >> (n_offbits - n_infobits));
@@ -125,6 +133,7 @@ run_simulation(cache_line_t *cache_lines, const uint8_t cache_line_size,
     printf("total hits:\t\t%d\n", n_hits);
     printf("total misses:\t\t%d\n", n_misses);
     printf("percent hits:\t\t%f\n", (float)(n_hits) / (float)(n_total));
+
     return 0;
 }
 

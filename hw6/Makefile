@@ -1,11 +1,11 @@
 CFLAGS = -g3 -O0
 LLVMFLAGS = -emit-llvm -S
-OPTFLAGS = -load-pass-plugin=$$PWD/lib-emit-addr.so -passes="emit-addr-pass" -disable-output
+OPTFLAGS = -load-pass-plugin=$$PWD/lib-emit-addr.so -passes="emit-addr-pass"
 
 BLOCK_SIZE = 128
 CACHE_SIZE = 4096
 
-build: cache-simulator lib-emit-addr.so 01-scan.ll 02-matmul.ll 03-quicksort.ll
+build: cache-simulator lib-emit-addr.so 01-scan-llvm 02-matmul-llvm 03-quicksort-llvm
 
 # shared library for instrumentation pass
 lib-emit-addr.so: emit-addr-pass.cpp
@@ -14,15 +14,17 @@ lib-emit-addr.so: emit-addr-pass.cpp
 cache-simulator: cache-simulator.c
 	gcc $(CFLAGS) -o $@ $<
 
-# LLVM-IR files
+# LLVM-IR Files without pass
 %.ll: %.c
-	clang $(LLVMFLAGS) -S $<
+	clang $(LLVMFLAGS) -o $@ $<
+
+# compile into *-llvm files with pass
+%-llvm: %.ll
+	opt $(OPTFLAGS) $< -S -o opt-$<
+	clang opt-$< -o $@
 
 check: build
-	opt $(OPTFLAGS) 02-matmul.ll 2>&1 1>/dev/null | ./cache-simulator --data-block-size $(BLOCK_SIZE) --cache-size $(CACHE_SIZE)
-
-# %-llvm: %.ll
-# 	clang -o $@ $<
+	./01-scan-llvm | ./cache-simulator --data-block-size $(BLOCK_SIZE) --cache-size $(CACHE_SIZE)
 
 clean:
 	rm -f cache-simulator *-llvm *.ll *.so

@@ -4,6 +4,9 @@
 #include <time.h>
 #include <assert.h>
 
+#define N (1 << 10)     // array size
+static int input[N];    // input array
+
 void
 swap(int *a, int *b)
 {
@@ -40,16 +43,12 @@ quicksort(int arr[], int low, int high)
 int
 main(void)
 {
-    srand(time(NULL));
-    const int len = 512;
-    int input[len];
-
-    for (int i = 0; i < len; ++i)
+    for (int i = 0; i < N; ++i)
         input[i] = rand() % 1024;
 
-    quicksort(input, 0, len - 1);
+    quicksort(input, 0, N - 1);
     
-    for (int i = 0; i < len - 1; ++i)
+    for (int i = 0; i < N - 1; ++i)
         assert(input[i] <= input[i + 1]);
     
     exit(0);

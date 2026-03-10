@@ -11,6 +11,7 @@ typedef uint16_t u16;
 typedef uint32_t u32;
 typedef uint64_t u64;
 
+/* Cache line in fully-associative cache */
 typedef struct cache_line {
         u64 tag : 61;   // tag bits of address
         u8  m   : 1;    // modifed bit
@@ -19,7 +20,7 @@ typedef struct cache_line {
 } cache_line_t;
 
 typedef struct cache {
-        cache_line_t    *cache_lines;   // pointer to array of cache lines
+        cache_line_t    *cache_lines;
         u16             n_cache_lines;  // number of cache lines
         u8              n_offbits;      // number of offset bits per block
         u8              n_tagbits;      // number of tag bits per block
@@ -48,12 +49,16 @@ cache_t *cache_create(u16 cache_size, u8 block_size)
         cache_t *cache = malloc(sizeof(*cache));
         cache->n_cache_lines = cache_size / block_size;
         cache->n_offbits = cache_get_offbits(block_size);
-        // number of tag bits is given by the address size
-        // minus the number of offset bits
-        // e.g. address = 64 bit, block size = 64 bytes
-        // -> number of tag bits = 64 - log(64) = 64 - 6 = 58
+        /**
+         * Number of tag bits is given by the address size
+         * minus the number of offset bits
+         * 
+         * e.g. address = 64 bit, block size = 64 bytes
+         * -> number of tag bits = 64 - log(64) = 64 - 6 = 58
+         */
         cache->n_tagbits = 64 - cache->n_offbits;
-        cache->cache_lines = calloc(cache->n_cache_lines, sizeof(cache_line_t));
+        cache->cache_lines = calloc(cache->n_cache_lines, 
+                                    sizeof(cache_line_t));
         return cache;
 }
 
@@ -61,8 +66,7 @@ cache_t *cache_create(u16 cache_size, u8 block_size)
  * cache_destroy(): free allocated cache resources
  * @cache: cache object to be deallocated
  */
-void
-cache_destroy(cache_t *cache)
+void cache_destroy(cache_t *cache)
 {
         free(cache->cache_lines);
         free(cache);
@@ -77,22 +81,23 @@ cache_destroy(cache_t *cache)
  */
 int cache_lookup(cache_t *cache, u64 addr, char rw)
 {
-        int i;
-        for (i = 0; i < cache->n_cache_lines; i++) {
-                cache_line_t *line = (cache->cache_lines + i);
+        u8 hit;
+        cache_line_t *line;
+
+        for (hit = 0, line = cache->cache_lines; 
+             line < cache->cache_lines + cache->n_cache_lines; line++) {
                 if (line->tag == (addr >> cache->n_offbits) && line->v) {
+                        hit = 1;
                         line->u = 1;
                         if (rw == 'w')
                                 line->m = 1;
                         break;
                 }
         }
-        /* if the cache produced a hit */
-        if (i < cache->n_cache_lines)
-                printf("Cache Hit: %s to %lx\n",
+        if (hit)
+                printf("Cache Hit: %s to %lx\n", 
                         (rw == 'r') ? "Read" : "Write", addr);
-        
-        return i < cache->n_cache_lines;
+        return hit;
 }
 
 /**
@@ -198,6 +203,7 @@ int main(int argc, char *argv[])
 
         cache_t *cache = cache_create(cache_size, cache_line_size);
         if (cache_simulate(cache) < 0) {
+                fprintf(stderr, "Simulation failure. Exiting...\n");
                 cache_destroy(cache);
                 exit(1);
         }

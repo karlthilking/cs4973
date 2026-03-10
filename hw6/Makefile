@@ -24,6 +24,6 @@ cache-simulator: cache-simulator.c
 	clang opt-$< -o $@
 
 check: build
-	./01-scan-llvm | ./cache-simulator --data-block-size $(BLOCK_SIZE) --cache-size $(CACHE_SIZE)
+	./02-matmul-llvm | ./cache-simulator --data-block-size $(BLOCK_SIZE) --cache-size $(CACHE_SIZE)
 clean:
 	rm -f cache-simulator *-llvm *.ll *.so

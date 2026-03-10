@@ -141,3 +141,16 @@ Physically vs Virtually Indexed Cache:
 
 LLVM:
     - Instruction class subclasses include LoadInst, StoreInst
+    - opt flags: load-pass-plugin=*.so passes="*-pass"
+
+TODO:
+    - make llvm-pass instrument IR instead of only outputting addresses X
+    - change pass to only output loads and stores to global variables X
+    - make sure replacement attempts to replace invalid line before
+      trying to evict a line X
+    - figure out llvm CreatePointerCast(), getUnderlyingObject() and IRBuilder
+    - add different configurations for associativity
+    - research different replacement algorithms
+    - create seperate modes for verbose and summary, or improve summary
+      description to be more detailed
+

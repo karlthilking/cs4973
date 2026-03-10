@@ -5,7 +5,7 @@ OPTFLAGS = -load-pass-plugin=$$PWD/lib-emit-addr.so -passes="emit-addr-pass"
 BLOCK_SIZE = 128
 CACHE_SIZE = 4096
 
-build: cache-simulator lib-emit-addr.so 01-scan-llvm 02-matmul-llvm 03-quicksort-llvm
+build: cache-simulator lib-emit-addr.so 01-scan-llvm 02-matmul-llvm 03-quicksort-llvm 04-random-llvm
 
 # shared library for instrumentation pass
 lib-emit-addr.so: emit-addr-pass.cpp
@@ -25,6 +25,5 @@ cache-simulator: cache-simulator.c
 
 check: build
 	./01-scan-llvm | ./cache-simulator --data-block-size $(BLOCK_SIZE) --cache-size $(CACHE_SIZE)
-
 clean:
 	rm -f cache-simulator *-llvm *.ll *.so

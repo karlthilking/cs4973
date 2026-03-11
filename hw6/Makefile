@@ -5,7 +5,7 @@ OPTFLAGS = -load-pass-plugin=$$PWD/libemitglobal.so -passes="emit-addr-pass"
 BLOCK_SIZE = 128        # data block size parameter to cache simulator
 CACHE_SIZE = 4096       # cache size parameter to cache simulator
 MODE = summary          # mode parameter to cache simulator
-ASSOC = 4               # associativity parameter to cache simulator
+ASSOC = 32              # associativity parameter to cache simulator
 PROG = 02-matmul-llvm   # test program to pipe to cache simulator
 
 build: cache-simulator libemitglobal.so 01-scan-llvm 02-matmul-llvm 03-quicksort-llvm 04-random-llvm

@@ -52,6 +52,7 @@ typedef struct cache_line {
 typedef struct cache_set {
         cache_line_t    *cache_lines; // cache lines in this set
         u16             index;        // index of set
+        u16             clock_hand;   // position to start eviction
         u16             nr_invalid;   // number of invalid entries
 } cache_set_t;
 
@@ -133,6 +134,7 @@ cache_t *cache_create(u16 cache_size, u8 data_block_size, u8 associativity)
         cache_set_t *set;
         for (set = cache->cache_sets; i < cache->nr_sets; set++, i++) {
                 set->index = i;
+                set->clock_hand = 0;
                 set->nr_invalid = cache->nr_set_entries;
                 set->cache_lines = calloc(cache->nr_set_entries,
                                           sizeof(cache_line_t));
@@ -192,22 +194,24 @@ u64 cache_rebase_tag(cache_t *cache, u64 tag)
  * cache_report(): Reports the occurence of a given event regarding the  
  *                 cache
  * @addr: Associated address to report on a hit, miss, or eviction
- * @rw: Indicates if a read or write generated the cache hit or cache miss
+ * @rw: Indicates if a read or write generated the cache hit or cache miss,
+ *      or during eviction if line had to be written back
  * @event: Describes the event to report
  */
-void cache_report(u64 addr, char rw, u8 event)
+void cache_report(u64 addr, char rwm, u8 event)
 {
         switch (event) {
         case C_HIT:
                 printf("Cache Hit: %s to %lx\n", 
-                        (rw == 'r') ? "Read" : "Write", addr);
+                        (rwm == 'r') ? "Read" : "Write", addr);
                 break;
         case C_MISS:
                 printf("Cache Miss: %s to %lx\n",
-                        (rw == 'r') ? "Read" : "Write", addr);
+                        (rwm == 'r') ? "Read" : "Write", addr);
                 break;
         case C_EVICT:
-                printf("Cache Eviction: Evicted %lx\n", addr);
+                printf("Cache Eviction: Evicted %lx, %s\n", addr,
+                       (rwm == 'm') ? "writing back..." : "no write back");
                 break;
         case C_INV:
                 printf("Cache Replacement: Replaced invalid line\n");
@@ -235,6 +239,8 @@ int cache_line_search(cache_t *cache, cache_set_t *set, u64 addr, char rw)
                 cache_line_t *line = set->cache_lines;
                 if (line->v && line->tag == tag) {
                         cache_report(addr, rw, C_HIT);
+                        /* Set use bit on reference */
+                        line->u = 1;
                         return 1;
                 }
                 cache_report(addr, rw, C_MISS);
@@ -246,6 +252,8 @@ int cache_line_search(cache_t *cache, cache_set_t *set, u64 addr, char rw)
         for (line = set->cache_lines; line < end; line++) {
                 if (line->v && line->tag == tag) {
                         cache_report(addr, rw, C_HIT);
+                        /* Set use bit on reference */
+                        line->u = 1;
                         return 1;
                 }
         }
@@ -254,13 +262,14 @@ int cache_line_search(cache_t *cache, cache_set_t *set, u64 addr, char rw)
 }
 
 /**
- * cache_replace_line(): Replace a line in the specified set with LRU
- *                       approximation
+ * cache_replace_line(): Replace first line in the set that is either invalid
+ *                       or does not have a set use bit
  * @cache: Cache which given set resides in
  * @set: Set to evict a line from
  * @addr: Address to replace with evicted line
  * @rw: Whether the cache miss originated from a read or a write
- * @return: 1 if a line was successfully replaced, 0 otherwise
+ * @miss: Out parameter to classify the type of miss
+ * @return: 1 if a line had to be written back, 0 otherwise
  */
 int cache_replace_line(cache_t *cache, cache_set_t *set, u64 addr, char rw)
 {
@@ -276,26 +285,29 @@ int cache_replace_line(cache_t *cache, cache_set_t *set, u64 addr, char rw)
                                         line->m = 1;
                                 cache_report(0, 0, C_INV);
                                 set->nr_invalid--;
-                                return 1;
+                                return 0;
                         }
                 }
         }
-        for (int i = 0;; i = (i + 1) % cache->nr_set_entries) {
-                cache_line_t *line = set->cache_lines + i;
+
+        u16 *i = &(set->clock_hand);
+        for (;; *i = ++(*i) % cache->nr_set_entries) {
+                cache_line_t *line = set->cache_lines + *i;
                 if (line->u)
                         line->u = 0;
                 else {
                         u64 evict = line->tag << cache->nr_offbits;
+                        char wrback = (line->m) ? 'm' : 0;
                         line->tag = tag;
                         line->v = 1;
                         line->u = 1;
                         if (rw == 'w')
                                 line->m = 1;
-                        cache_report(evict, 0, C_EVICT);
-                        return 1;
+                        cache_report(evict, wrback, C_EVICT);
+                        *i = ++(*i) % cache->nr_set_entries;
+                        return (wrback == 'm');
                 }
         }
-        return 0;
 }
 
 /**
@@ -308,8 +320,8 @@ int cache_replace_line(cache_t *cache, cache_set_t *set, u64 addr, char rw)
  * @nr_hits: Number of cache hits
  * @nr_misses: Number of cache misses
  */
-void cache_display_summary(cache_t *cache, int fd, 
-                           int nr_hits, int nr_misses)
+void cache_display_summary(cache_t *cache, int fd, int nr_hits,
+                           int nr_misses, int nr_evictions, int nr_wrbacks)
 {
         char buf[512];
         write(fd, "Cache Summary:\n", sizeof("Cache Summary:\n"));
@@ -333,13 +345,18 @@ void cache_display_summary(cache_t *cache, int fd,
                 }
         }
         snprintf(buf, sizeof(buf), 
-                 "\nCache Performance:\n"
-                 "Number of total memory access:\t%d\n"
-                 "Number of total hits:\t\t%d\n"
-                 "Number of total misses:\t\t%d\n"
-                 "Percent cache hits:\t\t%f\n\n",
+                 "\nCache Summary:\n"
+                 "Number of total memory access:\t\t%d\n"
+                 "Number of total hits:\t\t\t%d\n"
+                 "Number of total misses:\t\t\t%d\n"
+                 "Percent cache hits:\t\t\t%f\n"
+                 "Number of total evictions:\t\t%d\n"
+                 "Number of total write backs:\t\t%d\n"
+                 "Percent of evicted lines written back:\t%f\n\n",
                  nr_hits + nr_misses, nr_hits, nr_misses,
-                 (float)nr_hits / (float)(nr_hits + nr_misses));
+                 (float)nr_hits / (float)(nr_hits + nr_misses),
+                 nr_evictions, nr_wrbacks,
+                 (float)nr_wrbacks / (float)nr_evictions);
         write(fd, buf, strlen(buf));
 }
 
@@ -353,18 +370,27 @@ int cache_simulate(cache_t *cache, char mode)
 {       
         /* Disable stdout during simulation if in summary mode */
         int fd;
-        if (mode == 's') {
-                fd = open("/dev/stdout", O_WRONLY);
-                if (fd < 0) {
+        if (mode == 's' || mode == 'a') {
+                if ((fd = open("/dev/stdout", O_WRONLY)) < 0) {
                         perror("open");
                         return -1;
                 }
-                close(STDOUT_FILENO);
+                if (mode == 's')
+                        close(STDOUT_FILENO);
         }
-
-        int nr_hits = 0, nr_misses = 0; // number of cache hits and misses
-        u64  addr;                      // address of read or write
-        char rw;                        // if access was a read or write
+        
+        /**
+         * Stats to keep track of for summary
+         * nr_hits: Number of cache hits
+         * nr_misses: Number of cache misses
+         * nr_evictions: Number of cache evictions
+         * nr_wrbacks: Number of write backs during eviction
+         */
+        int nr_hits = 0, nr_misses = 0;
+        int nr_evictions = 0, nr_wrbacks = 0;
+        
+        u64  addr;
+        char rw;
         
         cache_set_t *set;
         while (!feof(stdin)) {
@@ -379,35 +405,41 @@ int cache_simulate(cache_t *cache, char mode)
                         nr_hits++;
                 else {
                         nr_misses++;
-                        int rc = cache_replace_line(cache, set, addr, rw);
-                        if (!rc) {
-                                fprintf(stderr, "Cache eviction failed\n");
-                                return -1;
-                        }
+                        nr_evictions++;
+                        if (cache_replace_line(cache, set, addr, rw))
+                                nr_wrbacks++;
                 }
         }
         
         /* Display of summary */
-        if (mode == 's')
-                cache_display_summary(cache, fd, nr_hits, nr_misses);
+        if (mode == 's' || mode == 'a')
+                cache_display_summary(cache, fd, nr_hits, nr_misses,
+                                      nr_evictions, nr_wrbacks);
         return 0;
 }
 
 int main(int argc, char *argv[])
 {
         if (argc < 7) {
-                fprintf(stderr, "Usage: ./cache-simulator "
-                                "--data-block-size [N] "
-                                "--cache-size [N] "
-                                "--mode [verbose | summary] "
-                                "--associativity [N] (optional)\n");
+                fprintf(stderr,
+                        "Usage: ./cache-simulator "
+                         "--data-block-size [N] "
+                         "--cache-size [N] "
+                         "--mode [verbose | summary] "
+                         "--associativity [N]\n"
+                         "Cache Parameters:\n"
+                         "\t--data-block-size\tCache line size in bytes\n"
+                         "\t--cache-size\t\tTotal cache size in bytes\n"
+                         "\t--mode\t\t\tverbose or summary\n"
+                         "\t  - If unspecified, all info is displayed\n"
+                         "\t--associativity\t\tAssociativity of the cache\n");
                 exit(1);
         }
         
         u8 data_block_size = 0;
         u16 cache_size = 0;
         u8 associativity = 0;
-        char mode = 0;
+        char mode = 'a';
         
         for (int i = 1; i < argc; i += 2) {
                 if (!strcmp("--data-block-size", argv[i]))
@@ -420,7 +452,7 @@ int main(int argc, char *argv[])
                         associativity = atoi(argv[i + 1]);
         }
         
-        if (!(data_block_size && cache_size && mode)) {
+        if (!(data_block_size && cache_size)) {
                 fprintf(stderr, "A data block size, cache size or mode "
                                 "were not selected\n");
                 exit(1);

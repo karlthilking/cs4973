@@ -54,7 +54,6 @@ main(int argc, char *argv[])
                  *      3 reads, 1 write
                  */
                 *(C+(i*N)+j) += *(A+(i*N)+k) * *(B+(k*N)+j);
-
             }
         }
     }

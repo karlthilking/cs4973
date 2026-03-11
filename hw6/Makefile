@@ -1,14 +1,17 @@
 CFLAGS = -g3 -O0
 LLVMFLAGS = -emit-llvm -S
-OPTFLAGS = -load-pass-plugin=$$PWD/lib-emit-addr.so -passes="emit-addr-pass"
+OPTFLAGS = -load-pass-plugin=$$PWD/libemitglobal.so -passes="emit-addr-pass"
 
-BLOCK_SIZE = 128
-CACHE_SIZE = 4096
+BLOCK_SIZE = 128        # data block size parameter to cache simulator
+CACHE_SIZE = 4096       # cache size parameter to cache simulator
+MODE = summary          # mode parameter to cache simulator
+ASSOC = 4               # associativity parameter to cache simulator
+PROG = 02-matmul-llvm   # test program to pipe to cache simulator
 
-build: cache-simulator lib-emit-addr.so 01-scan-llvm 02-matmul-llvm 03-quicksort-llvm 04-random-llvm
+build: cache-simulator libemitglobal.so 01-scan-llvm 02-matmul-llvm 03-quicksort-llvm 04-random-llvm
 
 # shared library for instrumentation pass
-lib-emit-addr.so: emit-addr-pass.cpp
+libemitglobal.so: emit-global-addr.cpp
 	clang++ -shared -fPIC -o $@ $<
 
 cache-simulator: cache-simulator.c
@@ -24,6 +27,6 @@ cache-simulator: cache-simulator.c
 	clang opt-$< -o $@
 
 check: build
-	./02-matmul-llvm | ./cache-simulator --data-block-size $(BLOCK_SIZE) --cache-size $(CACHE_SIZE)
+	./$(PROG) | ./cache-simulator --data-block-size $(BLOCK_SIZE) --cache-size $(CACHE_SIZE) --mode $(MODE) --associativity $(ASSOC)
 clean:
 	rm -f cache-simulator *-llvm *.ll *.so

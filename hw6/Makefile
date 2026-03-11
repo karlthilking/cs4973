@@ -32,6 +32,7 @@ check: build
 
 N = 1 2 4 8 16 32
 checkall: build
-	$(foreach n,$(N),./$(PROG) | ./cache-simulator $(ARGS) --associativity $(n);)
+        # test all levels of associativity
+	$(foreach n,$(N), ./$(PROG) | ./cache-simulator $(ARGS) --associativity $(n);)
 clean:
 	rm -f cache-simulator *-llvm *.ll *.so

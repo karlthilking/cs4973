@@ -1,0 +1,37 @@
+1-deadlock.txt
+
+In the naive code in mc-philosophers-deadlock.c, a deadlock can occur
+if each thread acquires the their left fork before any threads acquire
+their right fork. Given 3 threads, there will be 3 mutexes (interpreted
+as forks). Because each thread first tries to acquire the left mutex
+and then the right mutex, what can happen is that each thread will
+succesfully acquire the left mutex without blocking, but then block when
+they try to acquire their right mutex. Because every thread acquired
+their left mutex, and is now try to acquire the right mutex, the right
+mutex will be indefinitely held by another thread, i.e. deadlock has
+occured and no progress will be made.
+
+Possibly thread trace causing deadlock:
+let threads = main thread, t0, t1, t2, mutexes = m0, m1, m2
+
+|  main thread  |       t0       |       t1       |       t2       |
+ - create t0
+ - create t1
+ - create t2
+ -                                     t1 start
+ -                   t0 start
+ -                   lock m0           lock m1
+ -                                                      t2 start
+ -                 block on m1                          lock m2
+ -                                    block on m2
+ -                                                     block on m0
+
+Given the unfortunate schedule described by the thread trace, each
+thread (philosopher) has acquiring their left mutex (fork), and are
+now attempting to acquire to right mutex. However, no philosophers will
+release their left fork (which is another philosopher's right fork) so
+the wait trying to acquire their right fork indefinitely. Thus the 
+outcome of this trace is deadlock; no thread will be able to enter
+their critical section (eating) because they are trying to acquire a
+lock that will not be released, and the main thread will wait forever
+trying to join the threads which will never exit.

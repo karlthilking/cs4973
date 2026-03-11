@@ -5,7 +5,7 @@ OPTFLAGS = -load-pass-plugin=$$PWD/libemitglobal.so -passes="emit-addr-pass"
 BLOCK_SIZE = 128         
 CACHE_SIZE = 4096        
 MODE = summary           
-PROG = 03-quicksort-llvm 
+PROG = 02-matmul-llvm 
 ARGS = --data-block-size $(BLOCK_SIZE) --cache-size $(CACHE_SIZE) --mode $(MODE)
 
 build: cache-simulator libemitglobal.so 01-scan-llvm 02-matmul-llvm 03-quicksort-llvm 04-random-llvm
@@ -26,18 +26,8 @@ cache-simulator: cache-simulator.c
 	opt $(OPTFLAGS) $< -S -o opt-$<
 	clang opt-$< -o $@
 
+N = 1 2 4 8 16 32
 check: build
-        
-	for (( i=1; i<=32; i*=2 )) ; do \
-		if [[ $$i -eq 1 ]]; then \
-			echo "Direct Mapped"; \
-		elif [ $$i -eq 32 ]]; then \
-			echo "Fully Associative"; \
-		else \
-			echo "$$i-Way Associative"; \
-		fi \
-		./$(PROG) | ./cache-simulator $(ARGS) --associativity $$i; \
-	done
-        
+	$(foreach n,$(N),./$(PROG) | ./cache-simulator $(ARGS) --associativity $(n);)
 clean:
 	rm -f cache-simulator *-llvm *.ll *.so

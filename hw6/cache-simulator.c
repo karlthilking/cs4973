@@ -51,7 +51,8 @@ typedef struct cache_line {
  */
 typedef struct cache_set {
         cache_line_t    *cache_lines; // cache lines in this set
-        u16 index;                    // index of set
+        u16             index;        // index of set
+        u16             nr_invalid;   // number of invalid entries
 } cache_set_t;
 
 /**
@@ -132,6 +133,7 @@ cache_t *cache_create(u16 cache_size, u8 data_block_size, u8 associativity)
         cache_set_t *set;
         for (set = cache->cache_sets; i < cache->nr_sets; set++, i++) {
                 set->index = i;
+                set->nr_invalid = cache->nr_set_entries;
                 set->cache_lines = calloc(cache->nr_set_entries,
                                           sizeof(cache_line_t));
         }
@@ -159,7 +161,7 @@ void cache_destroy(cache_t *cache)
  */
 u64 cache_extract_index(cache_t *cache, u64 addr)
 {
-        u64 mask = ((1 << cache->nr_ixbits) - 1) << cache->nr_offbits;
+        u64 mask = (1 << cache->nr_ixbits) - 1;
         return (addr >> cache->nr_offbits) & mask;
 }
 
@@ -262,63 +264,38 @@ int cache_line_search(cache_t *cache, cache_set_t *set, u64 addr, char rw)
  */
 int cache_replace_line(cache_t *cache, cache_set_t *set, u64 addr, char rw)
 {
-        // u64 tag = addr >> (cache->nr_ixbits + cache->nr_offbits);
-        // for (int i = 0;; i = (i + 1) % cache->nr_set_entries) {
-        //         cache_line_t *line = set->cache_lines + i;
-        //         if (line->v && line->u) {
-        //                 /* Unset use bit if line is valid and used */
-        //                 line->u = 0;
-        //                 continue;
-        //         } else if (!(line->v)) {
-        //                 /* If line is invalid, it is free to replace */
-        //                 line->tag = tag;
-        //                 line->v = 1;
-        //                 line->u = 1;
-        //                 if (rw == 'w')
-        //                         line->m = 1;
-        //                 cache_report(0, 0, C_INV);
-        //                 return 1;
-        //         } else if (!(line->u)) {
-        //                 /* If the use bit is not set, evict this line */
-        //                 u64 evict_tag = line->tag << cache->nr_offbits;
-        //                 line->tag = tag;
-        //                 line->v = 1;
-        //                 line->u = 1;
-        //                 if (rw == 'w')
-        //                         line->m = 1;
-        //                 cache_report(evict_tag, 0, C_EVICT);
-        //                 return 1;
-        //         }
-        // }
-        
-        cache_line_t *line;
         u64 tag = addr >> (cache->nr_ixbits + cache->nr_offbits);
-
-        for (int epoch = 0; epoch < 2; epoch++) {
+        if (set->nr_invalid) {
                 for (int i = 0; i < cache->nr_set_entries; i++) {
-                        line = set->cache_lines + i;
-                        if (line->v && line->u)
-                                line->u = 0;
-                        else if (!(line->v)) {
+                        cache_line_t *line = set->cache_lines + i;
+                        if (!(line->v)) {
                                 line->tag = tag;
                                 line->v = 1;
                                 line->u = 1;
                                 if (rw == 'w')
                                         line->m = 1;
                                 cache_report(0, 0, C_INV);
-                                return 1;
-                        } else if (epoch && !(line->u)) {
-                                u64 evict = line->tag << cache->nr_offbits;
-                                line->tag = tag;
-                                line->v = 1;
-                                line->u = 1;
-                                if (rw == 'w')
-                                        line->m = 1;
-                                cache_report(evict, 0, C_EVICT);
+                                set->nr_invalid--;
                                 return 1;
                         }
                 }
         }
+        for (int i = 0;; i = (i + 1) % cache->nr_set_entries) {
+                cache_line_t *line = set->cache_lines + i;
+                if (line->u)
+                        line->u = 0;
+                else {
+                        u64 evict = line->tag << cache->nr_offbits;
+                        line->tag = tag;
+                        line->v = 1;
+                        line->u = 1;
+                        if (rw == 'w')
+                                line->m = 1;
+                        cache_report(evict, 0, C_EVICT);
+                        return 1;
+                }
+        }
+        return 0;
 }
 
 /**

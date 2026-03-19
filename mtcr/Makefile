@@ -1,13 +1,13 @@
 CC = gcc
 CFLAGS = -g3 -O0
 
-build: libckpt.so ckpt open
+build: libckpt.so ckpt
 
 %: %.c
-	$(CC) $(CFLAGS) -o $@ $<
+	$(CC) $(CFLAGS) -lpthread -o $@ $<
 
 %.so: %.c
-	$(CC) $(CFLAGS) -shared -fPIC -o $@ $<
+	$(CC) $(CFLAGS) -shared -fPIC -ldl -o $@ $<
 
 clean:
-	rm -f libckpt.so ckpt 0_fd_test
+	rm -f libckpt.so ckpt open

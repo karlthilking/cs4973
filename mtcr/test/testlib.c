@@ -3,6 +3,7 @@
 #include <pthread.h>
 #include <err.h>
 #include <dlfcn.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,11 +11,32 @@
 #include <unistd.h>
 #include <semaphore.h>
 #include <assert.h>
+#include <sys/syscall.h>
+#include <asm/prctl.h>
+#include <sys/prctl.h>
 #include "testlib.h"
 
 /* Globals */
-thlist_t *thlist = NULL;
+thlist_t        *thlist = NULL;         // thread list
+ckpthdr_t       ckpthdrs[MAX_CKPTHDRS]; // checkpoint headers
+memrgn_t        memrgns[MAX_MEMRGNS];   // memory regions
+regctx_t        regctxs[MAX_REGCTXS];   // register contexts
+sem_t           ckpt_sem;
 
+pthread_mutex_t gmtx = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t  gcv = PTHREAD_COND_INITIALIZER;
+
+u32 nr_ckpthdrs = 0; // number of allocated checkpoint headers
+u32 nr_memrgns  = 0; // number of saved memory regions
+u32 nr_regctxs  = 0; // number of saved register contexts
+
+/**
+ * thlist_insert: Insert a newly spawned posix thread into the
+ *                thread list
+ * @ptid: Posix thread identifier of the newly spawned thread
+ * @return: Returns -1 if the insertion fails, 0 if the insertion
+ *          is successful
+ */
 int thlist_insert(pthread_t ptid)
 {
         thinfo_t *t = malloc(sizeof(thinfo_t));
@@ -33,6 +55,14 @@ int thlist_insert(pthread_t ptid)
         return 0;
 }
 
+/**
+ * thlist_remove: Remove a thread from the thread list; called if
+ *                a thread is joined or exits
+ * @ptid: Posix thread identifier of the thread to delete
+ * @return: Returns 0 if removal is successful, -1 if the given
+ *          posix thread identifier does not match any thread
+ *          in the thread list
+ */
 int thlist_remove(pthread_t ptid)
 {
         int rc = -1;
@@ -51,6 +81,37 @@ int thlist_remove(pthread_t ptid)
         return rc;
 }
 
+/**
+ * ckpthdr_init: Initializes a checkpoint header structure that
+ *               contains a pointer to either a memory region
+ *               structure or a register context structure
+ * @data: Data to intialize in the checkpoint header, either
+ *        a pointer to a memory region structure or a pointer to
+ *        a register context structure
+ * @type: Indicates if this header is for a memory region or if
+ *        it is for a register context
+ */
+void ckpthdr_init(ckpthdr_t *hdr, void *data, u8 type)
+{
+        if (type & TY_REGCTX) {
+                hdr->ctx = (regctx_t *)data;
+                hdr->type = TY_REGCTX;
+        } else {
+                hdr->rgn = (memrgn_t *)data;
+                hdr->type = TY_MEMRGN;
+        }
+
+}
+
+/**
+ * memrgn_init: Initialize a memory region structure with the
+ *              contents obtained from /proc/self/maps
+ * @rgn: The memory region structure to initialize
+ * @start: Start address of the memory region
+ * @end: End address of the memory region
+ * @rwxp: Permissions of the memory region
+ * @name: Name of the region (could be anonymous (NULL))
+ */
 void memrgn_init(memrgn_t *rgn, u64 start,
                  u64 end, char *rwxp, char *name)
 {
@@ -62,48 +123,71 @@ void memrgn_init(memrgn_t *rgn, u64 start,
         rgn->rwxp |= (rwxp[1] == 'w') ? W : 0;
         rgn->rwxp |= (rwxp[2] == 'x') ? X : 0;
         rgn->rwxp |= (rwxp[3] == 'p') ? P : 0;
-
-        rgn->name = strdup(name);
+        
+        /* Name is NULL for an anonymous region */
+        if (name)
+                rgn->name = strdup(name);
 }
 
 /**
- * regctx_init: 
- *
+ * regctx_init: Initialize a register context structure that
+ *              contains the register context and an indication
+ *              of whether or not the context is from a posix
+ *              thread
+ * @regctx: The register context structure to initialize
+ * @ptid: Posix thread identifier (if not the main thread)
+ * @ucp: Pointer to ucontext_t structure for the register context
+ * @type: Either TY_POSIX (posix thread) or TY_MAIN (main thread)
  */
 void regctx_init(regctx_t *regctx, pthread_t *ptid,
-                 ucontext_t *ucp, u8 type)
+                 ucontext_t *uc, u8 type)
 {
         regctx->type = type;
 
-        if (regctx->type & POSIX_THREAD)
+        if (ptid && regctx->type & TY_POSIX)
                 regctx->ptid = *ptid;
 
-        regctx->uc = *ucp;
+        regctx->uc = uc;
 }
 
+/**
+ * pthread_create: Wrapper function for the real pthread_create.
+ *                 Adds to thread to the thread list and calls
+ *                 the actual pthread_create function using the
+ *                 function pointer rptc (real pthread_create).
+ * @th: The pthread_t structure to spawn
+ * @attr: Attributes for the new thread
+ * @start: Start routine of the thread
+ * @arg: Arguments for the thread's routine
+ * @return: Forwards the return value of real call to       
+ *          pthread_create
+ */
 int pthread_create(pthread_t *th, const pthread_attr_t *attr,
                    void *(*start)(void *), void *arg)
 {
         int rc;
         
         assert(rptc);
-        // if (!rptc && !(rptc = dlsym(RTLD_NEXT, "pthread_create")))
-        //         err(EXIT_FAILURE, dlerror());
-
         if ((rc = rptc(th, attr, start, arg)) == 0)
                 assert(thlist_insert(*th) == 0);
 
         return rc;
 }
 
+/**
+ * pthread_join: Wrapper function for the real pthread_join.
+ *               Removes the thread from the thread list if the
+ *               join is successful.
+ * @th: The pthread_t structure to join
+ * @ret: The value returned on the thread being joined
+ * @return: Forwards the return value of the real call to 
+ *          pthread_join
+ */
 int pthread_join(pthread_t th, void **ret)
 {
         int rc;
         
         assert(rptj);
-        // if (!rptj && !(rptj = dlsym(RTLD_NEXT, "pthread_join")))
-        //         err(EXIT_FAILURE, dlerror());
-
         if ((rc = rptj(th, ret)) == 0)
                 assert(thlist_remove(th) == 0);
 
@@ -120,79 +204,302 @@ int pthread_join(pthread_t th, void **ret)
 // }
 
 /**
- *
+ * get_one_memrgn: Save one memory region from /proc/self/maps
+ *                 into a memory region structure
+ * @fd: File descriptor used to open /proc/self/maps
+ * @rgn: The memory region to save the information in
  */
 int get_one_memrgn(int fd, memrgn_t *rgn)
 {
-
+        u64 start, end;
+        char rwxp[4];
+        char name[256];
+        int stdindup, rc;
+        
+        /**
+         * Save original stdin and have stdin refer to the 
+         * file descriptor used to open /proc/self/maps to
+         * parse the contents of one memory region
+         */
+        stdindup = dup(STDIN_FILENO);
+        dup2(fd, STDIN_FILENO);
+        
+        /**
+         * Format of line in /proc/self/maps:
+         * address permissions offset device inode pathname
+         */
+        rc = scanf("%lx-%lx %4c %*s %*s %*[0-9 ]%[^\n]\n",
+                   &start, &end, rwxp, name);
+        
+        /* Restore stdin */
+        clearerr(stdin);
+        dup2(stdindup, STDIN_FILENO);
+        close(stdindup);
+        
+        if (rc == 0 || rc == EOF)
+                return EOF;
+        else if (rc == 3)
+                memrgn_init(rgn, start, end, rwxp, NULL);
+        else if (rc == 4) {
+                /**
+                 * Return -1 to indicate encountering a special
+                 * region. i.e. [vsyscall], [vvar], [vdso], or
+                 * guard page
+                 */
+                if (!strncmp(name, "[vsyscall]", 10) ||
+                    !strncmp(name, "[vvar]", 6) ||
+                    !strncmp(name, "[vdso]", 6) ||
+                    !strncmp(rwxp, "---p", 4))
+                        return -1;
+                
+                memrgn_init(rgn, start, end, rwxp, name);
+        }
 }
 
 /**
- *
+ * get_memrgns: Get all the memory regions in /proc/self/maps
+ *              and save the to the array of memrgn_t structures
+ * @rgns: The array of memory region structures to save
+ *        information about the address space in
  */
-int get_memrgns(memrgn_t *rgns)
+int get_memrgns()
 {
-}
+        int rc, fd;
 
-/**
- *
- */
-int wr_ckpthdr(int fd, ckpthdr_t *hdr)
-{
-}
-
-/**
- *
- */
-int wr_memrgn(int fd, memrgn_t *rgn)
-{
-}
-
-/**
- *
- */
-int wr_regctx(int fd, regctx_t *ctx)
-{
-}
-
-/**
- *
- */
-int wr_ckpt(int fd, u32 nr_hdrs, ckpthdr_t *hdrs)
-{
-}
-
-/**
- *
- *
- */
-void sighandler(int signum)
-{
-        static sem_t sem;
-        int sig_pthread = 0;
-
-        for (thinfo_t *t = thlist->head; t; t = t->next) {
-                if (pthread_equal(pthread_self(), t->ptid)) {
-                        printf("Signal received by pthread\n");
-                        sig_pthread = 1;
+        if ((fd = open("/proc/self/maps", O_RDONLY)) < 0)
+                err(EXIT_FAILURE, "open");
+        
+        do {
+                if (nr_memrgns >= MAX_MEMRGNS)
                         break;
+
+                rc = get_one_memrgn(fd, memrgns + nr_memrgns);
+                if (rc < 0)
+                        continue; 
+
+                ckpthdr_init(ckpthdrs + nr_ckpthdrs,
+                             (void *)(memrgns + nr_memrgns),
+                             TY_MEMRGN);
+                nr_ckpthdrs++;
+                nr_memrgns++;
+        } while (rc != EOF);
+
+        if (nr_memrgns >= MAX_MEMRGNS) {
+                fprintf(stderr, "Failed to save all memory "
+                                "regions\n");
+                return -1;
+        }
+        
+        return 0;
+}
+
+/**
+ * wr_ckptdata: Writes data to checkpoint file, the data could
+ *              be a checkpoint header, memory region, or
+ *              register context
+ * @fd: File descriptor to write to
+ * @data: Data to write
+ * @size: Size of the data
+ */
+int wr_ckptdata(int fd, void *data, u64 size)
+{
+        int rc, bytes = 0;
+        
+        while (bytes < size) {
+                rc = write(fd, data + bytes, size - bytes);
+                if (rc < 0) {
+                        perror("write");
+                        return -1;
+                }
+                bytes += rc;
+        }
+
+        assert(bytes == size);
+        return 0;
+}
+
+/**
+ * wr_ckpt: Write the a checkpoint file including all headers,
+ *          register contexts for each thread of execution,
+ *          as well as data for each memory region in the address
+ *          space
+ * @return: Returns -1 on error, 0 otherwise
+ */
+int wr_ckpt()
+{
+        assert(nr_ckpthdrs == nr_memrgns + nr_regctxs);
+
+        int fd, rc;
+        u32 wr_ckpthdrs = 0, wr_memrgns = 0, wr_regctxs = 0;
+        char buf[128];
+
+        snprintf(buf, sizeof(buf), "%d-ckpt.dat", getpid());
+        fd = open(buf, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR);
+
+        if (fd < 0) {
+                perror("open");
+                return -1;
+        }
+
+        for (u32 i = 0; i < nr_ckpthdrs; i++) {
+                ckpthdr_t *hdr = ckpthdrs + i;
+                
+                /* Write checkpoint header */
+                rc = wr_ckptdata(fd, (void *)hdr, sizeof(*hdr));
+                if (rc < 0)
+                        return -1;
+                wr_ckpthdrs++;
+                
+                /**
+                 * Write register context structure info as well
+                 * as the actual ucontext_t structure info
+                 */
+                if (hdr->type & TY_REGCTX) {
+                        regctx_t *ctx = hdr->ctx;
+
+                        rc = wr_ckptdata(fd, (void *)ctx,
+                                         sizeof(*ctx));
+                        if (rc < 0)
+                                return -1;
+
+                        size_t sz = sizeof(*ctx->uc);
+                        rc = wr_ckptdata(fd, ctx->uc, sz);
+
+                        if (rc < 0)
+                                return -1;
+                        wr_regctxs++;
+                }
+                
+                /**
+                 * Write memory region structure info and data
+                 * from the memory region
+                 */
+                if (hdr->type & TY_MEMRGN) {
+                        memrgn_t *rgn = hdr->rgn;
+                        
+                        rc = wr_ckptdata(fd, (void *)rgn,
+                                         sizeof(*rgn));
+                        if (rc < 0)
+                                return -1;
+
+                        u64 sz = (u64)(rgn->end - rgn->start);
+                        rc = wr_ckptdata(fd, rgn->start, sz);
+                        
+                        if (rc < 0)
+                                return -1;
+                        wr_memrgns++;
                 }
         }
         
-        if (!sig_pthread) {
-                printf("Signal recieved by main thread\n");
-                sem_init(&sem, 0, 0);
-                for (thinfo_t *t = thlist->head; t; t = t->next) {
-                        pthread_kill(t->ptid, SIGUSR2);
-                        sem_wait(&sem);
-                }
-                printf("main thread exiting\n");
-                exit(0);
+        assert(wr_ckpthdrs == nr_ckpthdrs);
+        assert(wr_regctxs == nr_regctxs);
+        assert(wr_memrgns == nr_memrgns);
+        assert(wr_ckpthdrs == wr_memrgns + wr_regctxs);
+}
+
+/**
+ * pthread_sighandler: Signal handler for posix threads during
+ *                     checkpoint. The thread will save its
+ *                     register context do the checkpoint header
+ *                     array and then suspend execution.
+ * @signum: Signal that caused the invocation of the handler
+ */
+void pthread_sighandler(int signum)
+{
+        ucontext_t uc;
+        /* Save the current register context in uc */
+        getcontext(&uc);
+        
+        /**
+         * Initialize a register context and a checkpoint header
+         * for this thread
+         */
+        pthread_t ptid = pthread_self();
+
+        pthread_mutex_lock(&gmtx);
+        
+        regctx_init(regctxs + nr_regctxs,
+                    &ptid, &uc, TY_POSIX);
+        ckpthdr_init(ckpthdrs + nr_ckpthdrs,
+                     (void *)(regctxs + nr_regctxs), TY_REGCTX);
+        nr_regctxs++;
+        nr_ckpthdrs++;
+        
+        pthread_cond_signal(&gcv);
+        pthread_mutex_unlock(&gmtx);
+        sem_wait(&ckpt_sem);
+
+        return;
+}
+
+/**
+ * main_sighandler: Signal handler for the main thread to
+ *                  coordinate the checkpoint.
+ * @signum: Signal that invoked the main thread's handler
+ */
+void main_sighandler(int signum)
+{
+        static int      is_restart; // checkpoint or restart
+        ucontext_t      uc;         // main thread's context
+        u64             fs;
+        
+        is_restart = 0;
+
+        syscall(SYS_arch_prctl, ARCH_GET_FS, &fs);
+        getcontext(&uc);
+        syscall(SYS_arch_prctl, ARCH_SET_FS, fs);
+
+        if (is_restart) {
+                is_restart = 0;
+                return;
         } else {
-                thlist->nr_threads--;
-                printf("pthread exiting\n");
-                sem_post(&sem);
-                pthread_exit(NULL);
+                is_restart = 1;
+                for (thinfo_t *t = thlist->head; t; t = t->next) {
+                        /**
+                         * Signal pthread to save its register
+                         * context and then suspend execution.
+                         * Posix thread calls sem_post when it
+                         * is done saving its state
+                         */
+                        pthread_kill(t->ptid, SIGUSR1);
+                }
+                
+                pthread_mutex_lock(&gmtx);
+                while (nr_ckpthdrs < thlist->nr_threads)
+                        pthread_cond_wait(&gcv, &gmtx);
+                /**
+                 * Now main thread saves it register context
+                 * into a checkpoint header that will later
+                 * be written
+                 */
+                regctx_init(regctxs + nr_regctxs, 
+                            NULL, &uc, TY_MAIN);
+                ckpthdr_init(ckpthdrs + nr_ckpthdrs,
+                             (void *)(regctxs + nr_regctxs),
+                             TY_REGCTX);
+                nr_regctxs++;
+                nr_ckpthdrs++;
+                
+                /**
+                 * All register contexts for the main thread and
+                 * any posix threads are now saved, proceed to
+                 * save the process memory regions
+                 */
+                if (get_memrgns() < 0)
+                        exit(EXIT_FAILURE);
+                
+                /* Now write checkpoint file */
+                if (wr_ckpt() < 0)
+                        exit(EXIT_FAILURE);
+
+                pthread_mutex_unlock(&gmtx);
+                printf("Finished writing checkpoint file: "
+                       "%d-ckpt.dat", getpid()); 
+                
+                for (u32 i = 0; i < thlist->nr_threads; i++)
+                        sem_post(&ckpt_sem);
+
+                return;
         }
 }
 
@@ -208,8 +515,11 @@ void __attribute__((constructor)) setup()
         rptj = dlsym(RTLD_NEXT, "pthread_join");
         // rpte = dlsym(RTLD_NEXT, "pthread_exit");
 
-        // if (!(rptc && rptj && rpte))
-        //         err(EXIT_FAILURE, dlerror());
+        if (!(rptc && rptj /* && rtpe */))
+                err(EXIT_FAILURE, dlerror());
+        
+        sem_init(&ckpt_sem, 0, 0);
 
-        signal(SIGUSR2, sighandler);
+        signal(SIGUSR2, main_sighandler);
+        signal(SIGUSR1, pthread_sighandler);
 }

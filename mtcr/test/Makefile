@@ -13,5 +13,5 @@ check:
 	./ckpt ./pth
 
 clean:
-	rm -f *.so ckpt pth
+	rm -f *.so *.dat ckpt pth
 

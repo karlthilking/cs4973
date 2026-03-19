@@ -1,3 +1,4 @@
+/* testlib.h */
 #ifndef TESTLIB_H
 #define TESTLIB_H
 
@@ -6,14 +7,22 @@
 #include <ucontext.h>
 #include <stdint.h>
 
-#define R       0x1 // read bit
-#define W       0x2 // write bit
-#define X       0x4 // execute bit
-#define P       0x8 // private bit
+/* Memory region permission bits */
+#define R               0x1 // Read bit
+#define W               0x2 // Write bit
+#define X               0x4 // Execute bit
+#define P               0x8 // Private bit
 
-#define MAIN_THREAD     0x1
-#define POSIX_THREAD    0x2
+/* Register context type */
+#define TY_MAIN         0x1 // Register context of main thread
+#define TY_POSIX        0x2 // Register context of posix thread
 
+/* Checkpoint data types */
+#define TY_CKPTHDR      0x1 // Checkpoint header structure
+#define TY_REGCTX       0x2 // Register context structure
+#define TY_MEMRGN       0x4 // Memory region structure
+
+/* Checkpoint structure constants */
 #define MAX_CKPTHDRS    100 
 #define MAX_MEMRGNS     100
 #define MAX_REGCTXS     100
@@ -50,8 +59,8 @@ struct __thlist_t {
  * @next: Next thread in the thread list
  */
 struct __thinfo_t {
-        pthread_t       ptid;
         thinfo_t        *next;
+        pthread_t       ptid;
 };
 
 /**
@@ -90,36 +99,43 @@ struct __memrgn_t {
  */
 struct __regctx_t {
         pthread_t       ptid;
-        ucontext_t      uc;
+        ucontext_t      *uc;
         u8              type;
 };
 
+/* Thread list insertion and deletion */
 extern int thlist_insert(pthread_t);
 extern int thlist_remove(pthread_t);
 
+/* Structure initializers */
 extern void memrgn_init(memrgn_t *, u64, u64, char *, char *);
-extern void regctx_init(regctx_t *, pthread_t, ucontext_t *, u8);
+extern void regctx_init(regctx_t *, pthread_t *,
+                        ucontext_t *, u8);
 
+/* Posix wrappers */
 extern int pthread_create(pthread_t *, const pthread_attr_t *,
                           void *(*)(void *), void *);
 extern int pthread_join(pthread_t, void **);
 extern void pthread_exit(void *);
 
+/* Utility functions for saving address space */
 extern int get_one_memrgn(int, memrgn_t *);
-extern int get_memrgns(memrgn_t *);
+extern int get_memrgns();
 
-extern int wr_ckpthdr(int, ckpthdr_t *);
-extern int wr_memrgn(int, memrgn_t *);
-extern int wr_regctx(int, regctx_t *);
-extern int wr_ckpt(int, u32, ckpthdr_t *);
+/* Utility functions for writing checkpoint file */
+extern int wr_ckptdata(int, void *, u64);
+extern int wr_ckpt();
 
+/* Signal handlers */
+extern void pthread_sighandler(int);
 extern void main_sighandler(int);
 extern void restart_sighandler(int);
 
+/* Constructor functions */
 extern void __attribute__((constructor)) setup();
 
 /**
- * NPTL Wrappers:
+ * NPTL function pointers:
  * rptc: Function pointer to real pthread_create
  * rptj: Function pointer to real pthread_join
  * rpte: Function pointer to real pthread_exit

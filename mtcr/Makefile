@@ -1,7 +1,7 @@
 CC = gcc
 CFLAGS = -g3 -O0
 
-build: libckpt.so ckpt
+build: libckpt.so ckpt testlib.so pth
 
 %: %.c
 	$(CC) $(CFLAGS) -lpthread -o $@ $<

@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <semaphore.h>
 #include <assert.h>
+#include <errno.h>
 #include <sys/syscall.h>
 #include <asm/prctl.h>
 #include <sys/prctl.h>
@@ -21,8 +22,8 @@ thlist_t        *thlist = NULL;         // thread list
 ckpthdr_t       ckpthdrs[MAX_CKPTHDRS]; // checkpoint headers
 memrgn_t        memrgns[MAX_MEMRGNS];   // memory regions
 regctx_t        regctxs[MAX_REGCTXS];   // register contexts
-sem_t           ckpt_sem;
 
+sem_t           ckpt_sem;
 pthread_mutex_t gmtx = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t  gcv = PTHREAD_COND_INITIALIZER;
 
@@ -127,6 +128,12 @@ void memrgn_init(memrgn_t *rgn, u64 start,
         /* Name is NULL for an anonymous region */
         if (name)
                 rgn->name = strdup(name);
+        else {
+                size_t len = strlen("anonymous");
+                rgn->name = malloc(len + 1);
+                strncpy(rgn->name, "anonymous", len);
+                rgn->name[len] = '\0';
+        }
 }
 
 /**
@@ -246,14 +253,20 @@ int get_one_memrgn(int fd, memrgn_t *rgn)
                  * region. i.e. [vsyscall], [vvar], [vdso], or
                  * guard page
                  */
-                if (!strncmp(name, "[vsyscall]", 10) ||
-                    !strncmp(name, "[vvar]", 6) ||
-                    !strncmp(name, "[vdso]", 6) ||
-                    !strncmp(rwxp, "---p", 4))
-                        return -1;
+                if (!strcmp(name, "[vsyscall]"))
+                        return MEMRGN_FAILED;
+                else if (!strcmp(name, "[vvar]"))
+                        return MEMRGN_FAILED;
+                else if (!strcmp(name, "[vdso]"))
+                        return MEMRGN_FAILED;
+                else if (rwxp[0] == '-' && rwxp[1] == '-' &&
+                         rwxp[2] == '-' && rwxp[3] == 'p')
+                        return MEMRGN_FAILED;
                 
                 memrgn_init(rgn, start, end, rwxp, name);
         }
+
+        return 0;
 }
 
 /**
@@ -269,52 +282,46 @@ int get_memrgns()
         if ((fd = open("/proc/self/maps", O_RDONLY)) < 0)
                 err(EXIT_FAILURE, "open");
         
-        do {
-                if (nr_memrgns >= MAX_MEMRGNS)
+        for (memrgn_t *r = memrgns; r < memrgns + nr_memrgns;) {
+                rc = get_one_memrgn(fd, r);
+                if (rc == EOF)
                         break;
-
-                rc = get_one_memrgn(fd, memrgns + nr_memrgns);
-                if (rc < 0)
-                        continue; 
+                else if (rc == MEMRGN_FAILED)
+                        continue;
 
                 ckpthdr_init(ckpthdrs + nr_ckpthdrs,
                              (void *)(memrgns + nr_memrgns),
                              TY_MEMRGN);
                 nr_ckpthdrs++;
                 nr_memrgns++;
-        } while (rc != EOF);
-
-        if (nr_memrgns >= MAX_MEMRGNS) {
-                fprintf(stderr, "Failed to save all memory "
-                                "regions\n");
-                return -1;
         }
-        
+
         return 0;
 }
 
-/**
- * wr_ckptdata: Writes data to checkpoint file, the data could
- *              be a checkpoint header, memory region, or
- *              register context
- * @fd: File descriptor to write to
- * @data: Data to write
- * @size: Size of the data
- */
-int wr_ckptdata(int fd, void *data, u64 size)
+
+int wr_ckptdata(int fd, void *data, u64 sz)
 {
-        int rc, bytes = 0;
-        
-        while (bytes < size) {
-                rc = write(fd, data + bytes, size - bytes);
+        if (!(data || sz)) {
+                fprintf(stderr, "wr_ckptdata: Receiving a NULL"
+                                "pointer or a size of 0\n");
+                return -1;
+        }
+
+        int rc;
+        u64 bytes = 0;
+
+        while (bytes < sz) {
+                rc = write(fd, data + bytes, sz - bytes);
                 if (rc < 0) {
-                        perror("write");
+                        fprintf(stderr, "%s %d\n",
+                                strerror(errno), errno);
                         return -1;
                 }
                 bytes += rc;
         }
 
-        assert(bytes == size);
+        assert(bytes == sz);
         return 0;
 }
 
@@ -329,7 +336,7 @@ int wr_ckpt()
 {
         assert(nr_ckpthdrs == nr_memrgns + nr_regctxs);
 
-        int fd, rc;
+        int fd;
         u32 wr_ckpthdrs = 0, wr_memrgns = 0, wr_regctxs = 0;
         char buf[128];
 
@@ -342,59 +349,88 @@ int wr_ckpt()
         }
 
         for (u32 i = 0; i < nr_ckpthdrs; i++) {
-                ckpthdr_t *hdr = ckpthdrs + i;
-                
-                /* Write checkpoint header */
-                rc = wr_ckptdata(fd, (void *)hdr, sizeof(*hdr));
-                if (rc < 0)
+                ckpthdr_t *h = ckpthdrs + i;
+
+                if (wr_ckptdata(fd, h, sizeof(*h)) < 0)
                         return -1;
-                wr_ckpthdrs++;
                 
-                /**
-                 * Write register context structure info as well
-                 * as the actual ucontext_t structure info
-                 */
-                if (hdr->type & TY_REGCTX) {
-                        regctx_t *ctx = hdr->ctx;
+                void *data = NULL;
+                u64 sz = 0;
 
-                        rc = wr_ckptdata(fd, (void *)ctx,
-                                         sizeof(*ctx));
-                        if (rc < 0)
+                if (h->type & TY_REGCTX) {
+                        data = (void *)(h->ctx);
+                        sz = sizeof(regctx_t);
+                        
+                        if (wr_ckptdata(fd, data, sz) < 0) {
+                                fprintf(stderr,
+                                        "Failed to write "
+                                        "regctx_t structure "
+                                        "to checkpoint file\n");
                                 return -1;
+                        }
 
-                        size_t sz = sizeof(*ctx->uc);
-                        rc = wr_ckptdata(fd, ctx->uc, sz);
-
-                        if (rc < 0)
+                        data = (void *)(h->ctx->uc);
+                        sz = sizeof(ucontext_t);
+                        
+                        if (wr_ckptdata(fd, data, sz) < 0) {
+                                fprintf(stderr, 
+                                        "Failed to write "
+                                        "ucontext_t to "
+                                        "checkpoint file\n");
                                 return -1;
+                        }
                         wr_regctxs++;
-                }
-                
-                /**
-                 * Write memory region structure info and data
-                 * from the memory region
-                 */
-                if (hdr->type & TY_MEMRGN) {
-                        memrgn_t *rgn = hdr->rgn;
-                        
-                        rc = wr_ckptdata(fd, (void *)rgn,
-                                         sizeof(*rgn));
-                        if (rc < 0)
-                                return -1;
+                } else if (h->type & TY_MEMRGN) {
+                        memrgn_t *r = h->rgn;
 
-                        u64 sz = (u64)(rgn->end - rgn->start);
-                        rc = wr_ckptdata(fd, rgn->start, sz);
-                        
-                        if (rc < 0)
+                        data = (void *)r;
+                        sz = sizeof(memrgn_t);
+
+                        if (wr_ckptdata(fd, data, sz) < 0) {
+                                fprintf(stderr,
+                                        "Failed to write memory "
+                                        "region structure to "
+                                        "checkpoint file\n");
                                 return -1;
+                        }
+                        
+                        data = r->start;
+                        sz = (u64)(r->end) - (u64)(r->start);
+                        
+                        if (wr_ckptdata(fd, data, sz) < 0) {
+                                char buf[5];
+                                buf[0] = (r->rwxp & R) ? 
+                                          'r' : '-';
+                                buf[1] = (r->rwxp & W) ?
+                                          'w' : '-';
+                                buf[2] = (r->rwxp & X) ?
+                                          'x' : '-';
+                                buf[3] = (r->rwxp & P) ?
+                                          'p' : 's';
+                                buf[4] = '\0';
+                                fprintf(stderr,
+                                        "Failed to write "
+                                        "memory region to "
+                                        "checkpoint file: "
+                                        "%lx-%lx %s %s\n",
+                                        (u64)(r->start),
+                                        (u64)(r->end),
+                                        buf, r->name);
+                                return -1;
+                        }
                         wr_memrgns++;
+                                        
                 }
+                wr_ckpthdrs++;
         }
         
         assert(wr_ckpthdrs == nr_ckpthdrs);
         assert(wr_regctxs == nr_regctxs);
         assert(wr_memrgns == nr_memrgns);
         assert(wr_ckpthdrs == wr_memrgns + wr_regctxs);
+        
+        close(fd);
+        return 0;
 }
 
 /**
@@ -406,29 +442,36 @@ int wr_ckpt()
  */
 void pthread_sighandler(int signum)
 {
-        ucontext_t uc;
-        /* Save the current register context in uc */
+        static int      is_restart;
+        ucontext_t      uc;
+        
+        is_restart = 0;
         getcontext(&uc);
-        
-        /**
-         * Initialize a register context and a checkpoint header
-         * for this thread
-         */
-        pthread_t ptid = pthread_self();
 
-        pthread_mutex_lock(&gmtx);
-        
-        regctx_init(regctxs + nr_regctxs,
-                    &ptid, &uc, TY_POSIX);
-        ckpthdr_init(ckpthdrs + nr_ckpthdrs,
-                     (void *)(regctxs + nr_regctxs), TY_REGCTX);
-        nr_regctxs++;
-        nr_ckpthdrs++;
-        
-        pthread_cond_signal(&gcv);
-        pthread_mutex_unlock(&gmtx);
-        sem_wait(&ckpt_sem);
+        if (is_restart) {
+                is_restart = 0;
+                return;
+        } else {
+                /**
+                 * Initialize a register context and a checkpoint 
+                 * header for this thread
+                 */
+                pthread_t ptid = pthread_self();
 
+                pthread_mutex_lock(&gmtx);
+                
+                regctx_init(regctxs + nr_regctxs,
+                            &ptid, &uc, TY_POSIX);
+                ckpthdr_init(ckpthdrs + nr_ckpthdrs,
+                             (void *)(regctxs + nr_regctxs), 
+                             TY_REGCTX);
+                nr_regctxs++;
+                nr_ckpthdrs++;
+                
+                pthread_cond_signal(&gcv);
+                pthread_mutex_unlock(&gmtx);
+                sem_wait(&ckpt_sem);
+        }
         return;
 }
 
@@ -522,4 +565,25 @@ void __attribute__((constructor)) setup()
 
         signal(SIGUSR2, main_sighandler);
         signal(SIGUSR1, pthread_sighandler);
+}
+
+void __attribute__((destructor)) cleanup()
+{
+        thinfo_t *t = thlist->head;
+
+        while (t) {
+                thinfo_t *next = t->next;
+                free(t);
+                t = next;
+        }
+        pthread_mutex_destroy(&thlist->mtx);
+        free(thlist);
+
+        for (int i = 0; i < nr_memrgns; i++)
+                if (memrgns[i].name)
+                        free(memrgns[i].name);
+
+        sem_destroy(&ckpt_sem);
+        pthread_mutex_destroy(&gmtx);
+        pthread_cond_destroy(&gcv);
 }

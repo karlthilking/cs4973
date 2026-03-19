@@ -13,6 +13,8 @@
 #define X               0x4 // Execute bit
 #define P               0x8 // Private bit
 
+#define MEMRGN_FAILED   (-532439)
+
 /* Register context type */
 #define TY_MAIN         0x1 // Register context of main thread
 #define TY_POSIX        0x2 // Register context of posix thread

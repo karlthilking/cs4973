@@ -294,8 +294,10 @@ int get_memrgns()
                              TY_MEMRGN);
                 nr_ckpthdrs++;
                 nr_memrgns++;
+                r++;
         }
-
+        
+        close(fd);
         return 0;
 }
 
@@ -537,7 +539,7 @@ void main_sighandler(int signum)
 
                 pthread_mutex_unlock(&gmtx);
                 printf("Finished writing checkpoint file: "
-                       "%d-ckpt.dat", getpid()); 
+                       "%d-ckpt.dat\n", getpid()); 
                 
                 for (u32 i = 0; i < thlist->nr_threads; i++)
                         sem_post(&ckpt_sem);

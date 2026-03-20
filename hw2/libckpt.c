@@ -9,10 +9,7 @@
 #include <assert.h>     
 #include <unistd.h>    
 #include <sys/mman.h>   
-#ifdef __x86_64
-#   include <asm/prctl.h>
-#   include <sys/prctl.h>
-#endif
+#include <asm/prctl.h>
 #include <sys/syscall.h>
 
 #define NAME_LEN            128
@@ -176,22 +173,18 @@ sig_handler(int signum)
     is_restart = 0;
     unsigned long fs;
     // avoid *** stack smashing detected ***
-#ifdef __x86_64
     if (syscall(SYS_arch_prctl, ARCH_GET_FS, &fs) < 0) {
-        perror("ARCH_GET_FS");
+        perror("syscall ARCH_GET_FS");
         exit(EXIT_FAILURE);
     }
-#endif
     if (getcontext(&uc) < 0) {
         perror("getcontext");
         exit(EXIT_FAILURE);
     }
-#ifdef __x86_64
     if (syscall(SYS_arch_prctl, ARCH_SET_FS, fs) < 0) {
-        perror("ARCH_SET_FS");
+        perror("syscall ARCH_SET_FS");
         exit(EXIT_FAILURE);
     }
-#endif
     signal(SIGUSR2, sig_handler2);
     if (is_restart) {
         puts("Restarting...");

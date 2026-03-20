@@ -9,7 +9,6 @@
 #include <assert.h>
 #include <errno.h>
 #include <sys/auxv.h>
-#include <signal.h>
 
 #define NAME_LEN            128
 #define MAX_CKPT_HEADERS    1000
@@ -45,10 +44,6 @@ restore_segment(int ckpt_fd, ckpt_header_t *ckpt_header)
     prot |= (ckpt_header->rwxp[2] == 'x') ? PROT_EXEC : PROT_NONE;
     flags = MAP_FIXED;
     flags |= (ckpt_header->rwxp[3] == 'p') ? MAP_PRIVATE : MAP_SHARED;
-    // there seems to be a permission issue with mapping shared memory
-    // segments; just skip them for now
-    if (flags & MAP_SHARED)
-        return 0;
     if (!strcmp(ckpt_header->name, "[stack]")) {
         prot |= PROT_GROWSDOWN;
         flags |= MAP_GROWSDOWN;
@@ -69,8 +64,7 @@ restore_segment(int ckpt_fd, ckpt_header_t *ckpt_header)
     // mmap segment giving it full permissions temporarily
     if ((addr = mmap(ckpt_header->start, len, PROT_READ | PROT_WRITE |
                      PROT_EXEC, flags, fd, 0)) == MAP_FAILED) {
-        fprintf(stderr, "mmap: %s, filename: %s\n", 
-                strerror(errno), ckpt_header->name);
+        perror("mmap");
         return -1;
     }
     rc = 0;

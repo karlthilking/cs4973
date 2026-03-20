@@ -23,13 +23,45 @@ ckpthdr_t       ckpthdrs[MAX_CKPTHDRS]; // checkpoint headers
 memrgn_t        memrgns[MAX_MEMRGNS];   // memory regions
 regctx_t        regctxs[MAX_REGCTXS];   // register contexts
 
-sem_t           ckpt_sem;
-pthread_mutex_t gmtx = PTHREAD_MUTEX_INITIALIZER;
-pthread_cond_t  gcv = PTHREAD_COND_INITIALIZER;
+sem_t           __gsem;
+pthread_mutex_t __gmtx = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t  __gcond = PTHREAD_COND_INITIALIZER;
 
 u32 nr_ckpthdrs = 0; // number of allocated checkpoint headers
 u32 nr_memrgns  = 0; // number of saved memory regions
 u32 nr_regctxs  = 0; // number of saved register contexts
+
+/**
+ * perm_stoi: Convert permission string to unsigned 8 bit integer
+ * @rwxp: The string to representing the permissions
+ * @perms: Pointer to the integer to store the permission info in
+ */
+u8 perm_stoi(char *rwxp, u8 *perms)
+{
+        *perms = 0;
+
+        *perms |= (rwxp[0] == 'r') ? R : 0;
+        *perms |= (rwxp[1] == 'w') ? W : 0;
+        *perms |= (rwxp[2] == 'x') ? X : 0;
+        *perms |= (rwxp[3] == 'p') ? P : 0;
+
+        return *perms;
+}
+
+/**
+ * perm_itos: Convert permission integer representation to string
+ * @rwxp: String to store the permission info in
+ * @perms: The integer representation of the permissions
+ */
+char *perm_itos(char *rwxp, u8 perms)
+{
+        rwxp[0] == (perms & R) ? 'r' : '-';
+        rwxp[1] == (perms & W) ? 'w' : '-';
+        rwxp[2] == (perms & X) ? 'x' : '-';
+        rwxp[3] == (perms & P) ? 'p' : 's';
+
+        return rwxp;
+}
 
 /**
  * thlist_insert: Insert a newly spawned posix thread into the
@@ -101,7 +133,6 @@ void ckpthdr_init(ckpthdr_t *hdr, void *data, u8 type)
                 hdr->rgn = (memrgn_t *)data;
                 hdr->type = TY_MEMRGN;
         }
-
 }
 
 /**
@@ -120,10 +151,10 @@ void memrgn_init(memrgn_t *rgn, u64 start,
         rgn->end = (void *)end;
         
         rgn->rwxp = 0;
-        rgn->rwxp |= (rwxp[0] == 'r') ? R : 0;
-        rgn->rwxp |= (rwxp[1] == 'w') ? W : 0;
-        rgn->rwxp |= (rwxp[2] == 'x') ? X : 0;
-        rgn->rwxp |= (rwxp[3] == 'p') ? P : 0;
+        perm_stoi(rwxp, &rgn->rwxp);
+        
+        /* Make sure not to save a guard page */
+        assert(!GUARD(rgn->rwxp));
         
         /* Name is NULL for an anonymous region */
         if (name)
@@ -223,6 +254,8 @@ int get_one_memrgn(int fd, memrgn_t *rgn)
         char name[256];
         int stdindup, rc;
         
+        memset(name, 0, sizeof(name));
+
         /**
          * Save original stdin and have stdin refer to the 
          * file descriptor used to open /proc/self/maps to
@@ -245,22 +278,20 @@ int get_one_memrgn(int fd, memrgn_t *rgn)
         
         if (rc == 0 || rc == EOF)
                 return EOF;
-        else if (rc == 3)
+        else if (rc == 3) {
+                if (!strncmp(rwxp, "---", 3))
+                        return MEMRGN_FAILED;
                 memrgn_init(rgn, start, end, rwxp, NULL);
-        else if (rc == 4) {
+        } else if (rc == 4) {
                 /**
                  * Return -1 to indicate encountering a special
                  * region. i.e. [vsyscall], [vvar], [vdso], or
-                 * guard page
+                 * guard page "---p"
                  */
-                if (!strcmp(name, "[vsyscall]"))
-                        return MEMRGN_FAILED;
-                else if (!strcmp(name, "[vvar]"))
-                        return MEMRGN_FAILED;
-                else if (!strcmp(name, "[vdso]"))
-                        return MEMRGN_FAILED;
-                else if (rwxp[0] == '-' && rwxp[1] == '-' &&
-                         rwxp[2] == '-' && rwxp[3] == 'p')
+                if (!strncmp(name, "[vsyscall]", 10) ||
+                    !strncmp(name, "[vvar]", 6) ||
+                    !strncmp(name, "[vdso]", 6) ||
+                    !strncmp(rwxp, "---", 3))
                         return MEMRGN_FAILED;
                 
                 memrgn_init(rgn, start, end, rwxp, name);
@@ -282,7 +313,7 @@ int get_memrgns()
         if ((fd = open("/proc/self/maps", O_RDONLY)) < 0)
                 err(EXIT_FAILURE, "open");
         
-        for (memrgn_t *r = memrgns; r < memrgns + nr_memrgns;) {
+        for (memrgn_t *r = memrgns; r < memrgns + MAX_MEMRGNS;) {
                 rc = get_one_memrgn(fd, r);
                 if (rc == EOF)
                         break;
@@ -305,7 +336,7 @@ int get_memrgns()
 int wr_ckptdata(int fd, void *data, u64 sz)
 {
         if (!(data || sz)) {
-                fprintf(stderr, "wr_ckptdata: Receiving a NULL"
+                fprintf(stderr, "wr_ckptdata: Received a NULL"
                                 "pointer or a size of 0\n");
                 return -1;
         }
@@ -399,17 +430,12 @@ int wr_ckpt()
                         data = r->start;
                         sz = (u64)(r->end) - (u64)(r->start);
                         
+                        /* Make sure not a guard page */
+                        assert(!GUARD(r->rwxp));
+                        
                         if (wr_ckptdata(fd, data, sz) < 0) {
-                                char buf[5];
-                                buf[0] = (r->rwxp & R) ? 
-                                          'r' : '-';
-                                buf[1] = (r->rwxp & W) ?
-                                          'w' : '-';
-                                buf[2] = (r->rwxp & X) ?
-                                          'x' : '-';
-                                buf[3] = (r->rwxp & P) ?
-                                          'p' : 's';
-                                buf[4] = '\0';
+                                char buf[4];
+                                perm_itos(buf, r->rwxp);
                                 fprintf(stderr,
                                         "Failed to write "
                                         "memory region to "
@@ -460,7 +486,7 @@ void pthread_sighandler(int signum)
                  */
                 pthread_t ptid = pthread_self();
 
-                pthread_mutex_lock(&gmtx);
+                pthread_mutex_lock(&__gmtx);
                 
                 regctx_init(regctxs + nr_regctxs,
                             &ptid, &uc, TY_POSIX);
@@ -470,9 +496,9 @@ void pthread_sighandler(int signum)
                 nr_regctxs++;
                 nr_ckpthdrs++;
                 
-                pthread_cond_signal(&gcv);
-                pthread_mutex_unlock(&gmtx);
-                sem_wait(&ckpt_sem);
+                pthread_cond_signal(&__gcond);
+                pthread_mutex_unlock(&__gmtx);
+                sem_wait(&__gsem);
         }
         return;
 }
@@ -509,9 +535,9 @@ void main_sighandler(int signum)
                         pthread_kill(t->ptid, SIGUSR1);
                 }
                 
-                pthread_mutex_lock(&gmtx);
+                pthread_mutex_lock(&__gmtx);
                 while (nr_ckpthdrs < thlist->nr_threads)
-                        pthread_cond_wait(&gcv, &gmtx);
+                        pthread_cond_wait(&__gcond, &__gmtx);
                 /**
                  * Now main thread saves it register context
                  * into a checkpoint header that will later
@@ -537,12 +563,12 @@ void main_sighandler(int signum)
                 if (wr_ckpt() < 0)
                         exit(EXIT_FAILURE);
 
-                pthread_mutex_unlock(&gmtx);
+                pthread_mutex_unlock(&__gmtx);
                 printf("Finished writing checkpoint file: "
                        "%d-ckpt.dat\n", getpid()); 
                 
                 for (u32 i = 0; i < thlist->nr_threads; i++)
-                        sem_post(&ckpt_sem);
+                        sem_post(&__gsem);
 
                 return;
         }
@@ -552,6 +578,9 @@ void __attribute__((constructor)) setup()
 {
         /* Initialize thread list */
         thlist = malloc(sizeof(thlist_t));
+        if (!thlist)
+                err(EXIT_FAILURE, "malloc");
+
         thlist->head = NULL;
         thlist->nr_threads = 0;
         pthread_mutex_init(&thlist->mtx, NULL);
@@ -563,7 +592,7 @@ void __attribute__((constructor)) setup()
         if (!(rptc && rptj /* && rtpe */))
                 err(EXIT_FAILURE, dlerror());
         
-        sem_init(&ckpt_sem, 0, 0);
+        sem_init(&__gsem, 0, 0);
 
         signal(SIGUSR2, main_sighandler);
         signal(SIGUSR1, pthread_sighandler);
@@ -578,6 +607,7 @@ void __attribute__((destructor)) cleanup()
                 free(t);
                 t = next;
         }
+        
         pthread_mutex_destroy(&thlist->mtx);
         free(thlist);
 
@@ -585,7 +615,7 @@ void __attribute__((destructor)) cleanup()
                 if (memrgns[i].name)
                         free(memrgns[i].name);
 
-        sem_destroy(&ckpt_sem);
-        pthread_mutex_destroy(&gmtx);
-        pthread_cond_destroy(&gcv);
+        sem_destroy(&__gsem);
+        pthread_mutex_destroy(&__gmtx);
+        pthread_cond_destroy(&__gcond);
 }

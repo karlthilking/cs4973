@@ -12,7 +12,7 @@
 #define W               0x2 // Write bit
 #define X               0x4 // Execute bit
 #define P               0x8 // Private bit
-
+#define GUARD(p)        (!((p) & (R | W | X)))
 #define MEMRGN_FAILED   (-532439)
 
 /* Register context type */
@@ -104,6 +104,10 @@ struct __regctx_t {
         ucontext_t      *uc;
         u8              type;
 };
+
+/* Utilities for memory segment permissions */
+extern u8 perm_stoi(char *rwxp, u8 *perms);
+extern char *perm_itos(char *rwxp, u8 perms);
 
 /* Thread list insertion and deletion */
 extern int thlist_insert(pthread_t);

@@ -106,39 +106,39 @@ struct __regctx_t {
 };
 
 /* Utilities for memory segment permissions */
-extern u8 perm_stoi(char *rwxp, u8 *perms);
-extern char *perm_itos(char *rwxp, u8 perms);
+u8 perm_stoi(char *rwxp, u8 *perms);
+char *perm_itos(char *rwxp, u8 perms);
 
 /* Thread list insertion and deletion */
-extern int thlist_insert(pthread_t);
-extern int thlist_remove(pthread_t);
+int thlist_insert(pthread_t);
+int thlist_remove(pthread_t);
 
 /* Structure initializers */
-extern void memrgn_init(memrgn_t *, u64, u64, char *, char *);
-extern void regctx_init(regctx_t *, pthread_t *,
+void memrgn_init(memrgn_t *, u64, u64, char *, char *);
+void regctx_init(regctx_t *, pthread_t *,
                         ucontext_t *, u8);
 
 /* Posix wrappers */
-extern int pthread_create(pthread_t *, const pthread_attr_t *,
+int pthread_create(pthread_t *, const pthread_attr_t *,
                           void *(*)(void *), void *);
-extern int pthread_join(pthread_t, void **);
-extern void pthread_exit(void *);
+int pthread_join(pthread_t, void **);
+void pthread_exit(void *);
 
 /* Utility functions for saving address space */
-extern int get_one_memrgn(int, memrgn_t *);
-extern int get_memrgns();
+int get_one_memrgn(int, memrgn_t *);
+int get_memrgns();
 
 /* Utility functions for writing checkpoint file */
-extern int wr_ckptdata(int, void *, u64);
-extern int wr_ckpt();
+int wr_ckptdata(int, void *, u64);
+int wr_ckpt();
 
 /* Signal handlers */
-extern void pthread_sighandler(int);
-extern void main_sighandler(int);
-extern void restart_sighandler(int);
+void pthread_sighandler(int);
+void main_sighandler(int);
+void restart_sighandler(int);
 
 /* Constructor functions */
-extern void __attribute__((constructor)) setup();
+void __attribute__((constructor)) setup();
 
 /**
  * NPTL function pointers:

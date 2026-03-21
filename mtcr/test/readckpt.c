@@ -8,6 +8,7 @@
 #include <ucontext.h>
 #include <errno.h>
 #include <err.h>
+#include <sys/mman.h>
 #include "testlib.h"
 
 char *regs[NGREG] =
@@ -17,107 +18,128 @@ char *regs[NGREG] =
         "RIP", "EFL", "CSGSFS", "ERR", "TRAPNO", "OLDMASK", "CR2"
 };
 
-int readckpt(int fd, void *data, size_t sz)
+int rd_ckptdata(int fd, void *data, size_t sz)
 {
         int rc, bytes = 0;
 
         while (bytes < sz) {
                 rc = read(fd, data + bytes, sz - bytes);
-                if (rc == 0)
-                        return EOF;
-                else if (rc < 0) {
+                if (rc < 0) {
                         perror("read");
-                        return errno;
+                        return -1;
                 }
                 bytes += rc;
         }
-        
+
         assert(bytes == sz);
         return 0;
 }
 
-int print(char *ckptfile)
+int print_ckptfile(char *ckptfile)
 {
+        int fd;
+        int nr_ckpthdrs = 0, nr_memrgns = 0, nr_regctxs = 0;
+        off_t ckpt_sz;
+
         ckpthdr_t       hdrs[MAX_CKPTHDRS];
-        regctx_t        ctxs[MAX_REGCTXS];
         memrgn_t        rgns[MAX_MEMRGNS];
-        ucontext_t      uctx[MAX_REGCTXS];
-        
-        int rc, fd;
-        int nr_ckpthdrs = 0, nr_regctxs = 0, nr_memrgns = 0;
+        regctx_t        ctxs[MAX_REGCTXS];
 
         if ((fd = open(ckptfile, O_RDONLY)) < 0) {
                 perror("open");
                 return -1;
         }
         
-        for (;;) {
-                ckpthdr_t *h = hdrs + nr_ckpthdrs;
-                size_t sz = sizeof(ckpthdr_t);
-                
-                rc = readckpt(fd, (void *)h, sz);
+        if ((ckpt_sz = lseek(fd, 0, SEEK_END)) < 0) {
+                perror("lseek");
+                return -1;
+        } else if (lseek(fd, 0, SEEK_SET) != 0) {
+                perror("lseek");
+                return -1;
+        }
+        
+        /**
+         * Format of checkpoint file:
+         * header 0
+         * regctx_t + ucontext_t or memrgn_t + memory segment
+         * header 1
+         * ...
+         */
+        void *data = NULL;
+        size_t sz = 0;
+        int bytes = 0;
 
-                if (rc != 0 && rc == EOF)
-                        break;
-                else if (rc != 0)
+        while (bytes < ckpt_sz) {
+                ckpthdr_t *h = hdrs + nr_ckpthdrs;
+                
+                data = (void *)h;
+                sz = sizeof(ckpthdr_t);
+
+                if (rd_ckptdata(fd, data, sz) < 0)
                         return -1;
+                bytes += sz;
                 
                 if (h->type & TY_REGCTX) {
-                        regctx_t *c = ctxs + nr_regctxs;
+                        regctx_t *c = h->ctx;
+
+                        data = (void *)c;
                         sz = sizeof(regctx_t);
 
-                        if (readckpt(fd, (void *)c, sz) != 0)
+                        if (rd_ckptdata(fd, data, sz) < 0)
                                 return -1;
-                        
-                        ucontext_t *uc = uctx + nr_regctxs;
+                        bytes += sz;
+
+                        ucontext_t *uc = c->uc;
                         sz = sizeof(ucontext_t);
 
-                        if (readckpt(fd, (void *)uc, sz) != 0)
+                        if (rd_ckptdata(fd, data, sz) < 0)
                                 return -1;
-
+                        bytes += sz;
                         nr_regctxs++;
                 } else if (h->type & TY_MEMRGN) {
-                        memrgn_t *r = rgns + nr_memrgns;
+                        memrgn_t *r = h->rgn;
+
+                        data = (void *)r;
                         sz = sizeof(memrgn_t);
 
-                        if (readckpt(fd, (void *)r, sz) != 0)
+                        if (rd_ckptdata(fd, data, sz) < 0)
                                 return -1;
+                        bytes += sz;
                         
-                        u64 rgn_size = (u64)(r->end - r->start);
-                        if (lseek(fd, rgn_size, SEEK_CUR) < 0)
+                        /* Skip past actual memory region */
+                        sz = (u64)(r->end - r->start);
+                        if (lseek(fd, sz, SEEK_CUR) < 0) {
+                                perror("lseek");
                                 return -1;
-
+                        }
+                        bytes += sz;
                         nr_memrgns++;
                 }
-
                 nr_ckpthdrs++;
         }
-        
-        printf("Displaying memory regions...\n");
+
+        printf("Displaying Memory Regions\n");
         for (int i = 0; i < nr_memrgns; i++) {
-                printf("Memory region %d:\n", i);
-                memrgn_t *r = rgns + i;
                 printf("%lx-%lx %c%c%c%c %s\n",
-                       (u64)r->start, (u64)r->end,
-                       (r->rwxp & R) ? 'r' : '-',
-                       (r->rwxp & W) ? 'w' : '-',
-                       (r->rwxp & X) ? 'x' : '-',
-                       (r->rwxp & P) ? 'p' : 's',
-                       r->name);
+                       (u64)rgns[i].start,
+                       (u64)rgns[i].end,
+                       (rgns[i].rwxp & R) ? 'r' : '-',
+                       (rgns[i].rwxp & W) ? 'w' : '-',
+                       (rgns[i].rwxp & X) ? 'x' : '-',
+                       (rgns[i].rwxp & P) ? 'p' : 's',
+                       rgns[i].name);
         }
-        
-        printf("Displaying register contexts...\n");
+
+        printf("Displaying Register contexts\n");
         for (int i = 0; i < nr_regctxs; i++) {
-                printf("Register context %d:\n", i);
-                regctx_t *c = ctxs + i;
-                ucontext_t *uc = uctx + i;
-                for (int i = 0; i < NGREG; i++) {
-                        printf("%-12s%p\n",
+                for (int j = 0; j < NGREG; j++) {
+                        printf("%-12s%p", 
                                regs[i],
-                               uc->uc_mcontext.gregs[i]);
+                               ctxs[i].uc->uc_mcontext.gregs[i]);
                 }
         }
 
+        close(fd);
         return 0;
 }
 
@@ -127,8 +149,8 @@ int main(int argc, char *argv[])
                 fprintf(stderr, "Usage: ./print <ckpt-file>\n");
                 exit(1);
         }
-
-        if (print(argv[1]) < 0)
+       
+        if (print_ckptfile(argv[1]) < 0)
                 exit(1);
 
         exit(0);

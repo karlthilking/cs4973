@@ -18,10 +18,14 @@
 #include "testlib.h"
 
 /* Globals */
-thlist_t        *thlist = NULL;         // thread list
-ckpthdr_t       ckpthdrs[MAX_CKPTHDRS]; // checkpoint headers
-memrgn_t        memrgns[MAX_MEMRGNS];   // memory regions
-regctx_t        regctxs[MAX_REGCTXS];   // register contexts
+rptc_t __pthread_create = NULL;
+rptj_t __pthread_join = NULL;
+rpte_t __pthread_exit = NULL;
+
+thlist_t        *__thlst = NULL;        // thread list
+ckpthdr_t       __hdrs[MAX_CKPTHDRS];   // checkpoint headers
+memrgn_t        __rgns[MAX_MEMRGNS];    // memory regions
+regctx_t        __ctxs[MAX_REGCTXS];    // register contexts
 
 sem_t           __gsem;
 pthread_mutex_t __gmtx = PTHREAD_MUTEX_INITIALIZER;
@@ -79,11 +83,11 @@ int thlist_insert(pthread_t ptid)
 
         t->ptid = ptid;
 
-        pthread_mutex_lock(&thlist->mtx);
-        t->next = thlist->head;
-        thlist->head = t;
-        thlist->nr_threads++;
-        pthread_mutex_unlock(&thlist->mtx);
+        pthread_mutex_lock(&__thlst->mtx);
+        t->next = __thlst->head;
+        __thlst->head = t;
+        __thlst->nr_threads++;
+        pthread_mutex_unlock(&__thlst->mtx);
         
         return 0;
 }
@@ -100,16 +104,16 @@ int thlist_remove(pthread_t ptid)
 {
         int rc = -1;
         
-        pthread_mutex_lock(&thlist->mtx);
-        for (thinfo_t *t = thlist->head; t; t = t->next) {
+        pthread_mutex_lock(&__thlst->mtx);
+        for (thinfo_t *t = __thlst->head; t; t = t->next) {
                 if (pthread_equal(t->next->ptid, ptid)) {
                         t->next = t->next->next;
-                        thlist->nr_threads--;
+                        __thlst->nr_threads--;
                         rc = 0;
                         break;
                 }
         }
-        pthread_mutex_unlock(&thlist->mtx);
+        pthread_mutex_unlock(&__thlst->mtx);
 
         return rc;
 }
@@ -127,10 +131,10 @@ int thlist_remove(pthread_t ptid)
 void ckpthdr_init(ckpthdr_t *hdr, void *data, u8 type)
 {
         if (type & TY_REGCTX) {
-                hdr->ctx = (regctx_t *)data;
+                memcpy(hdr->ctx, data, sizeof(regctx_t));
                 hdr->type = TY_REGCTX;
         } else {
-                hdr->rgn = (memrgn_t *)data;
+                memcpy(hdr->rgn, data, sizeof(memrgn_t));
                 hdr->type = TY_MEMRGN;
         }
 }
@@ -157,12 +161,12 @@ void memrgn_init(memrgn_t *rgn, u64 start,
         assert(!GUARD(rgn->rwxp));
         
         /* Name is NULL for an anonymous region */
-        if (name)
-                rgn->name = strdup(name);
-        else {
+        if (name) {
+                strncpy(rgn->name, name, strlen(name) + 1);
+                rgn->name[strlen(name)] = '\0';
+        } else {
                 size_t len = strlen("anonymous");
-                rgn->name = malloc(len + 1);
-                strncpy(rgn->name, "anonymous", len);
+                strncpy(rgn->name, "anonymous", len + 1);
                 rgn->name[len] = '\0';
         }
 }
@@ -178,21 +182,22 @@ void memrgn_init(memrgn_t *rgn, u64 start,
  * @type: Either TY_POSIX (posix thread) or TY_MAIN (main thread)
  */
 void regctx_init(regctx_t *regctx, pthread_t *ptid,
-                 ucontext_t *uc, u8 type)
+                 ucontext_t *ucp, u8 type)
 {
         regctx->type = type;
 
         if (ptid && regctx->type & TY_POSIX)
                 regctx->ptid = *ptid;
 
-        regctx->uc = uc;
+        memcpy(&regctx->uc, ucp, sizeof(ucontext_t));
 }
 
 /**
  * pthread_create: Wrapper function for the real pthread_create.
  *                 Adds to thread to the thread list and calls
  *                 the actual pthread_create function using the
- *                 function pointer rptc (real pthread_create).
+ *                 function pointer __pthread_create (real 
+ *                 call to pthread_create).
  * @th: The pthread_t structure to spawn
  * @attr: Attributes for the new thread
  * @start: Start routine of the thread
@@ -205,8 +210,8 @@ int pthread_create(pthread_t *th, const pthread_attr_t *attr,
 {
         int rc;
         
-        assert(rptc);
-        if ((rc = rptc(th, attr, start, arg)) == 0)
+        assert(__pthread_create);
+        if ((rc = __pthread_create(th, attr, start, arg)) == 0)
                 assert(thlist_insert(*th) == 0);
 
         return rc;
@@ -225,8 +230,8 @@ int pthread_join(pthread_t th, void **ret)
 {
         int rc;
         
-        assert(rptj);
-        if ((rc = rptj(th, ret)) == 0)
+        assert(__pthread_join);
+        if ((rc = __pthread_join(th, ret)) == 0)
                 assert(thlist_remove(th) == 0);
 
         return rc;
@@ -313,19 +318,21 @@ int get_memrgns()
         if ((fd = open("/proc/self/maps", O_RDONLY)) < 0)
                 err(EXIT_FAILURE, "open");
         
-        for (memrgn_t *r = memrgns; r < memrgns + MAX_MEMRGNS;) {
+        for (int i = 0; i < MAX_MEMRGNS;) {
+                memrgn_t *r = __rgns + i;
+
                 rc = get_one_memrgn(fd, r);
                 if (rc == EOF)
                         break;
                 else if (rc == MEMRGN_FAILED)
                         continue;
 
-                ckpthdr_init(ckpthdrs + nr_ckpthdrs,
-                             (void *)(memrgns + nr_memrgns),
+                ckpthdr_init(__hdrs + nr_ckpthdrs,
+                             (void *)(__rgns + nr_memrgns),
                              TY_MEMRGN);
                 nr_ckpthdrs++;
                 nr_memrgns++;
-                r++;
+                i++;
         }
         
         close(fd);
@@ -380,74 +387,32 @@ int wr_ckpt()
                 perror("open");
                 return -1;
         }
+        
+        void *data = NULL;
+        size_t sz = 0;
 
+        /**
+         * For each checkpoint header:
+         * - Write checkpoint header data
+         * - If header is for a memory region:
+         *      - write all data from memory segment
+         */
         for (u32 i = 0; i < nr_ckpthdrs; i++) {
-                ckpthdr_t *h = ckpthdrs + i;
-
-                if (wr_ckptdata(fd, h, sizeof(*h)) < 0)
+                ckpthdr_t *h = __hdrs + i;
+                
+                data = (void *)h;
+                sz = sizeof(ckpthdr_t);
+                if (wr_ckptdata(fd, data, sz) < 0)
                         return -1;
                 
-                void *data = NULL;
-                u64 sz = 0;
-
-                if (h->type & TY_REGCTX) {
-                        data = (void *)(h->ctx);
-                        sz = sizeof(regctx_t);
-                        
-                        if (wr_ckptdata(fd, data, sz) < 0) {
-                                fprintf(stderr,
-                                        "Failed to write "
-                                        "regctx_t structure "
-                                        "to checkpoint file\n");
-                                return -1;
-                        }
-
-                        data = (void *)(h->ctx->uc);
-                        sz = sizeof(ucontext_t);
-                        
-                        if (wr_ckptdata(fd, data, sz) < 0) {
-                                fprintf(stderr, 
-                                        "Failed to write "
-                                        "ucontext_t to "
-                                        "checkpoint file\n");
-                                return -1;
-                        }
+                if (h->type & TY_REGCTX)
                         wr_regctxs++;
-                } else if (h->type & TY_MEMRGN) {
-                        memrgn_t *r = h->rgn;
-
-                        data = (void *)r;
-                        sz = sizeof(memrgn_t);
-
-                        if (wr_ckptdata(fd, data, sz) < 0) {
-                                fprintf(stderr,
-                                        "Failed to write memory "
-                                        "region structure to "
-                                        "checkpoint file\n");
+                else if (h->type & TY_MEMRGN) {
+                        data = h->rgn.start;
+                        sz = (u64)(h->rgn.end - h->rgn.start);
+                        if (wr_ckptdata(fd, data, sz) < 0)
                                 return -1;
-                        }
-                        
-                        data = r->start;
-                        sz = (u64)(r->end) - (u64)(r->start);
-                        
-                        /* Make sure not a guard page */
-                        assert(!GUARD(r->rwxp));
-                        
-                        if (wr_ckptdata(fd, data, sz) < 0) {
-                                char buf[4];
-                                perm_itos(buf, r->rwxp);
-                                fprintf(stderr,
-                                        "Failed to write "
-                                        "memory region to "
-                                        "checkpoint file: "
-                                        "%lx-%lx %s %s\n",
-                                        (u64)(r->start),
-                                        (u64)(r->end),
-                                        buf, r->name);
-                                return -1;
-                        }
                         wr_memrgns++;
-                                        
                 }
                 wr_ckpthdrs++;
         }
@@ -488,10 +453,10 @@ void pthread_sighandler(int signum)
 
                 pthread_mutex_lock(&__gmtx);
                 
-                regctx_init(regctxs + nr_regctxs,
+                regctx_init(__ctxs + nr_regctxs,
                             &ptid, &uc, TY_POSIX);
-                ckpthdr_init(ckpthdrs + nr_ckpthdrs,
-                             (void *)(regctxs + nr_regctxs), 
+                ckpthdr_init(__hdrs + nr_ckpthdrs,
+                             (void *)(__ctxs + nr_regctxs), 
                              TY_REGCTX);
                 nr_regctxs++;
                 nr_ckpthdrs++;
@@ -525,7 +490,7 @@ void main_sighandler(int signum)
                 return;
         } else {
                 is_restart = 1;
-                for (thinfo_t *t = thlist->head; t; t = t->next) {
+                for (thinfo_t *t = __thlst->head; t; t = t->next) {
                         /**
                          * Signal pthread to save its register
                          * context and then suspend execution.
@@ -536,17 +501,17 @@ void main_sighandler(int signum)
                 }
                 
                 pthread_mutex_lock(&__gmtx);
-                while (nr_ckpthdrs < thlist->nr_threads)
+                while (nr_ckpthdrs < __thlst->nr_threads)
                         pthread_cond_wait(&__gcond, &__gmtx);
                 /**
                  * Now main thread saves it register context
                  * into a checkpoint header that will later
                  * be written
                  */
-                regctx_init(regctxs + nr_regctxs, 
+                regctx_init(__ctxs + nr_regctxs, 
                             NULL, &uc, TY_MAIN);
-                ckpthdr_init(ckpthdrs + nr_ckpthdrs,
-                             (void *)(regctxs + nr_regctxs),
+                ckpthdr_init(__hdrs + nr_ckpthdrs,
+                             (void *)(__ctxs + nr_regctxs),
                              TY_REGCTX);
                 nr_regctxs++;
                 nr_ckpthdrs++;
@@ -567,7 +532,7 @@ void main_sighandler(int signum)
                 printf("Finished writing checkpoint file: "
                        "%d-ckpt.dat\n", getpid()); 
                 
-                for (u32 i = 0; i < thlist->nr_threads; i++)
+                for (u32 i = 0; i < __thlst->nr_threads; i++)
                         sem_post(&__gsem);
 
                 return;
@@ -577,19 +542,19 @@ void main_sighandler(int signum)
 void __attribute__((constructor)) setup()
 {
         /* Initialize thread list */
-        thlist = malloc(sizeof(thlist_t));
-        if (!thlist)
+        __thlst = malloc(sizeof(thlist_t));
+        if (!__thlst)
                 err(EXIT_FAILURE, "malloc");
 
-        thlist->head = NULL;
-        thlist->nr_threads = 0;
-        pthread_mutex_init(&thlist->mtx, NULL);
+        __thlst->head = NULL;
+        __thlst->nr_threads = 0;
+        pthread_mutex_init(&__thlst->mtx, NULL);
 
-        rptc = dlsym(RTLD_NEXT, "pthread_create");
-        rptj = dlsym(RTLD_NEXT, "pthread_join");
+        __pthread_create = dlsym(RTLD_NEXT, "pthread_create");
+        __pthread_join = dlsym(RTLD_NEXT, "pthread_join");
         // rpte = dlsym(RTLD_NEXT, "pthread_exit");
 
-        if (!(rptc && rptj /* && rtpe */))
+        if (!(__pthread_create && __pthread_join /* && rtpe */))
                 err(EXIT_FAILURE, dlerror());
         
         sem_init(&__gsem, 0, 0);
@@ -600,7 +565,7 @@ void __attribute__((constructor)) setup()
 
 void __attribute__((destructor)) cleanup()
 {
-        thinfo_t *t = thlist->head;
+        thinfo_t *t = __thlst->head;
 
         while (t) {
                 thinfo_t *next = t->next;
@@ -608,12 +573,8 @@ void __attribute__((destructor)) cleanup()
                 t = next;
         }
         
-        pthread_mutex_destroy(&thlist->mtx);
-        free(thlist);
-
-        for (int i = 0; i < nr_memrgns; i++)
-                if (memrgns[i].name)
-                        free(memrgns[i].name);
+        pthread_mutex_destroy(&__thlst->mtx);
+        free(__thlst);
 
         sem_destroy(&__gsem);
         pthread_mutex_destroy(&__gmtx);

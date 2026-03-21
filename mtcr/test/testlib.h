@@ -66,20 +66,6 @@ struct __thinfo_t {
 };
 
 /**
- * ckpthdr_t: Checkpoint header
- * @rgn: Pointer to memory region struct
- * @ctx: Pointer to register context struct
- * @type: Either a memory region or register context
- */
-struct __ckpthdr_t {
-        union {
-                memrgn_t *rgn;
-                regctx_t *ctx;
-        };
-        u8 type;
-};
-
-/**
  * memrgn_t: Memory region in process address space
  * @start: Start address of memory region
  * @end: End address of memory region
@@ -89,8 +75,8 @@ struct __ckpthdr_t {
 struct __memrgn_t {
         void    *start;
         void    *end;
+        char    name[128];
         u8      rwxp;
-        char    *name;
 };
 
 /**
@@ -101,8 +87,22 @@ struct __memrgn_t {
  */
 struct __regctx_t {
         pthread_t       ptid;
-        ucontext_t      *uc;
+        ucontext_t      uc;
         u8              type;
+};
+
+/**
+ * ckpthdr_t: Checkpoint header
+ * @rgn: Pointer to memory region struct
+ * @ctx: Pointer to register context struct
+ * @type: Either a memory region or register context
+ */
+struct __ckpthdr_t {
+        union {
+                memrgn_t rgn;
+                regctx_t ctx;
+        };
+        u8 type;
 };
 
 /* Utilities for memory segment permissions */
@@ -146,10 +146,18 @@ void __attribute__((constructor)) setup();
  * rptj: Function pointer to real pthread_join
  * rpte: Function pointer to real pthread_exit
  */
-int (*rptc)(pthread_t *, const pthread_attr_t *,
-            void *(*)(void *), void *);
-int (*rptj)(pthread_t, void **);
-int (*rpte)(void *);
+// int (*rptc)(pthread_t *, const pthread_attr_t *,
+//             void *(*)(void *), void *);
+// int (*rptj)(pthread_t, void **);
+// int (*rpte)(void *);
 
+typedef int (*rptc_t)(pthread_t *, const pthread_attr_t *,
+                      void *(*)(void *), void *);
+typedef int (*rptj_t)(pthread_t, void **);
+typedef int (*rpte_t)(void *);
+
+extern rptc_t   __pthread_create;
+extern rptj_t   __pthread_join;
+extern rpte_t   __pthread_exit;
 #endif
 

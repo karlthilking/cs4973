@@ -1,0 +1,55 @@
+arm64 Pointer authentication instructions
+
+Summary:
+- PAC* instruction yields a PAC value
+- The pointer is authenticated using an AUT* instruction
+
+PAC* instructions:
+Inputs: Destination crypto key register, modifer, pointer
+
+PAC R12, LR, SP
+- Compute PAC using LR as address, SP as modifier and key.
+  Computed PAC is written to R12.
+
+PACG Rd, Rn, Rn
+- Compute PAC using two input registers and a key; PAC is 
+  written to Rd
+
+PACBTI R12, LR, SP 
+- Compute PAC using LR as address, SP as modifier and key.
+  Provide a validation BTI 'landing pad'.
+
+AUT R12, LR, SP
+- Authenticate LR using SP as the modifier
+
+AUT Ra, Rn, Rm
+- Authenticate Rn using Rm as the modifier
+
+Notes:
+- A PAC instruction stores signature in high-order bits of a pointer
+- AUT instruction removes and authenticates signature before
+  reading the pointer
+- If the pointer value changes before the write and read will
+  invalidate the signature and the CPU interprets authentication
+  failure as memory corruption (i.e. authentication fails, then
+  system invalidates the pointer, and when you try to use it,
+  a segmentation fault occurs)
+
+Epilogue and Prologue with arm64e:
+- pacibsp: Pointer authentication code for instruction address using 'B' as key
+- retab: Return from subroutine with pointer authentication
+- autibsp: Authenticate instruction address using key 'B'
+
+Four signing keys: IA, IB, DA, DB
+- I for instructions, D for data
+- A keys are global keys (process-independent)
+- B keys are local keys (unique among processes)
+  - key does not change in child after fork()
+  - however they can be changed in child after exec()
+- LR (link register; hold return address) is always signed
+  with the IB key using the SP on entry as discriminator.
+  (Unless a function does not spill LR to stack) 
+
+Further:
+- ptrauth.h from clang (for pac related user functions)
+

@@ -1,0 +1,167 @@
+arm64 Pointer authentication instructions
+
+Summary:
+- PAC* instruction yields a PAC value
+- The pointer is authenticated using an AUT* instruction
+
+PAC* instructions:
+Inputs: Destination crypto key register, modifer, pointer
+
+PAC R12, LR, SP
+- Compute PAC using LR as address, SP as modifier and key.
+  Computed PAC is written to R12.
+
+PACG Rd, Rn, Rn
+- Compute PAC using two input registers and a key; PAC is 
+  written to Rd
+
+PACBTI R12, LR, SP 
+- Compute PAC using LR as address, SP as modifier and key.
+  Provide a validation BTI 'landing pad'.
+
+AUT R12, LR, SP
+- Authenticate LR using SP as the modifier
+
+AUT Ra, Rn, Rm
+- Authenticate Rn using Rm as the modifier
+
+Notes:
+- A PAC instruction stores signature in high-order bits of a pointer
+- AUT instruction removes and authenticates signature before
+  reading the pointer
+- If the pointer value changes before the write and read will
+  invalidate the signature and the CPU interprets authentication
+  failure as memory corruption (i.e. authentication fails, then
+  system invalidates the pointer, and when you try to use it,
+  a segmentation fault occurs)
+
+Epilogue and Prologue with arm64e:
+- pacibsp: Pointer authentication code for instruction address 
+           (link register, x30/lr) using IB key and sp (stack 
+           pointer) as discriminator/modifier
+- retab: Return from subroutine with pointer authentication
+- autibsp: Authenticate x30/lr using IB key and sp
+
+Four signing keys: IA, IB, DA, DB
+- I for instructions, D for data
+- A keys are global keys (process-independent)
+- B keys are local keys (unique among processes)
+  - key does not change in child after fork()
+  - however they can be changed in child after exec()
+- LR (link register; holds return address) is always signed
+  with the IB key using the SP on entry as discriminator.
+  (Unless a function does not spill LR to stack) 
+
+Further:
+- ptrauth.h from clang (for pac related user functions)
+
+macOS architecture:
+        User space process
+        libSystem.dylib (libc, libpthread, etc.)
+        BSD layer (posix APIS, BSD syscalls, signals, etc.)
+        Mach layer (tasks, thread, ipc, vm, scheduling, traps)
+        Hardware layer
+
+Transparent checkpointing difficulties with PAC:
+- return addresses and function pointers are bound to a
+  per boot/process key which is in a privileged register, if a
+  process is transparently restored in terms of memory regions,
+  register contexts, etc., there will still be issues with
+  return addresses and function pointers because the crypto key
+  for signing/authenticating changes for each boot/new process
+- Any memory containing signed pointers have PAC values
+  - If these pointers are copied to the checkpoint file and
+    restored without any modifications, the signed values will
+    be invalid (i.e. authentication will fail, seg fault occurs)
+  - return addresses are signed with pacibsp; after restore, each
+    needs to be re-signed with the new key (generated per process)
+    and using the correct modifier (sp)
+
+Issue with setcontext():
+- when setcontext() restores an mcontext_t with saved lr, the saved
+  lr was signed with the old sp
+- the context is restored, but on a different stack, so when the
+  subroutine returns (retab, autibsp + ret, etc.) the stack pointer
+  used as the discriminator is different and the authentication
+  fails
+
+Possible workarounds:
+- setjmp/longjmp
+- hand-written assembly for getcontext()/setcontext()
+  - save and restore registers x19-x28, x29, x30, sp and d8-d15
+  - if x30 (link register) is restored directly without compiler
+    generated pacibsp in epilogue, autibsp in prologue so there
+    will be no issues with PAC
+  - xpaci instruction is avaialable to strip the keyed PAC from a
+    pointer without authentication
+  - walk frame and resign pointers with pacibsp to correctly sign
+    pointers based on the new per boot/process keys
+- libucontext
+  - external library providing ucontext.h that works correctly on
+    M-series chips
+- Process tracing (requires root privileges)
+  - task_for_pid, task_suspend, thread_get_state, thread_set_state
+  - mach_vm_read, mach_vm_write
+
+Full getcontext() responsibilities:
+- saves a ucontext_t which includes an mcontext_t
+- on arm64, mcontext_t captures general-purpose registers x0-x30,
+  as well as sp, pc, and neon/fp registers
+- also saves the signal was with sigprocmask()
+- i.e. the general responsibilities of getcontext() are all
+  possible in user space without an special privileges
+- things do require privilege:
+  - SCTLR_EL1, PAC key regs (APIAKey, APIBKey), TPIDR_ELI1, etc.
+
+macOS/arm64 replacement for getcontext/setcontext:
+- getcontext(): thread_get_state() with ARM_THREAD_STATE64
+  - mach trap into kernel that strips PAC tags from register values
+  - pc, lr, and sp from thread_get_state() are untagged
+- setcontext(): thread_set_state() with ARM_THREAD_STATE64
+  - register values passed to thread_set_state() are untagged,
+    when trap into kernel, the return address is re-signed
+- requires privileged helper to call Mach APIs on the checkpointed
+  process' threads (privilege=com.apple.security.cs.debugger)
+
+macOS equivalent to /proc/self/maps:
+- mach_vm_region/vm_region_recurse_64 to get all memory regions
+- read contents of memory region with mach_vm_read
+- restore memory regions with mach_vm_allocate + mach_vm_write
+
+Validating all signed return addresses in restored process:
+- Walk the stack frame and re-sign at restore time
+  - walk stack using x29 (fp), find each lr at [fp, #8], strip
+    the PAC with xpaci, re-sign with correct modifier (sp)
+  - modifier should always be sp at function entry (fp + 16)
+- pseudocode (works for standard frames):
+  u64 old_lr      = *(u64 *)(fp + 8)
+  u64 strip_lr    = ptrauth_strip((void *)old_lr,
+                                  ptrauth_key_return_address)
+  u64 sp_at_entry = fp + 16
+  u64 new_lr      = ptrauth_sign_unauthenticated(
+        (void *)strip_lr, ptrauth_key_ib, sp_at_entry
+  )
+  *(u64 *)(fp + 8) = new_lr
+
+Use a signal handler to re-sign on fault:
+- pointer authentication failures raises SIGSEV / EXC_BAD_ACCESS
+- when failure occurs, the fault address has high bits sets
+  - the handler can strip the high bits, find the correct signing context,
+    re-sign and resume
+  - to reliably recover the original return address, use si_addr in a 
+    siginfo_t structure which should have the faulting address which can
+    be re-signed
+
+goals:
+ - handle return addresses on the stack
+
+linux vs macos implementation:
+     Linux      |       macOS
+/proc/self/maps    mach_vm_region
+getcontext()       thread_get_state()
+setcontext()       thread_set_state
+   no PAC          frame walk+xpaci+ptrauth_sign_unauthenticated
+   no PAC          parse __AUTH_CONST + re-sign pointers
+   wrappers        same approach with wrappers
+   unprivileged    requires com.apple.security.cs.debugger     
+

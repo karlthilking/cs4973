@@ -399,3 +399,26 @@ aarch64 registers:
             *saved_lr = signed_lr;
             fp = (u64 *)fp[0];
     }   
+
+- Challenges with frame-walking approach:
+  - function may not have valid frame (i.e. [fp, #8])
+    - leaf functions (no frame record; stp x29, x30)
+    - assembly code without frame record
+  - frame pointer walk fp = fp[0] can be corrupted
+  - example:
+     foo:
+       pacibsp
+       ** interrupted by signal **
+       stp         x29, x30 [sp, #-16]
+     - x30 (lr) has been signed, but the frame record (fp, lr) were
+       not saved on the stack before the arrival of a signal
+     - foo has no frame record at checkpoint time, so lr will not
+       be stripped and re-signed properly, and getcontext() will then
+       save the unstripped lr register (will cause EXC_BAD_ACCESS)
+  - checkpointing is safe iff:
+    - every active frame has established a frame record
+    - no signal handler is mid-execution
+    - all function prologues have completed
+      - check pc to ensure frame record is eiter complete or not
+        yet started
+

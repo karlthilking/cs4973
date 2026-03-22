@@ -165,3 +165,237 @@ setcontext()       thread_set_state
    wrappers        same approach with wrappers
    unprivileged    requires com.apple.security.cs.debugger     
 
+- Check to see if libSystem (macOS runtime) is compiled as arm64e:
+  ls /System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld
+
+- Inspecting libSystem:
+  1) dyld-shared-cache-extractor \
+     /System/Volumes/Preboot/Cryptexes/OS/System/Library/dyld/\
+     dyld_shared_cache_arm64e \
+  
+  Inspect Mach-O header
+  2) otool -hv path/to/extracted/usr/lib/libSystem.B.dylib
+
+  Use objdump to see PAC instruction usage
+  3) llvm-objdump --disassemble-symbols=_setcontext \
+     /path/to/extracted/usr/lib/libSystem.B.dylib
+
+Other notes on PAC:
+- user-space binaries are compiled to arm64, but system libraries are arm64e
+
+com.apple.security.cs.debugger:
+- grants a process debugger privileges, allowing it to attach
+  to another process
+- calling task_for_pid() returns a Mach task port for the
+  child process which allows the debugger process to read
+  and write to the child's address space, and control
+  the child's threads
+- allows the use of privileged operations:
+  - mach_vm_read + mach_vm_write (save/restore memory)
+  - thread_suspend / thread_resume
+  - thread_get_state + thread_set_state (save/restore registers)
+  - mach_vm_region_recurse (enumerate memory mapping)
+- nuances:
+  - target process must enable get-task-allow, otherwise
+    task_for_pid will be blocked by SIP (system integity
+    protection)
+- need entitlements plist and sign with developer certificate
+  - example xml:
+     <dict>
+       <key>com.apple.security.cs.debugger</key>
+       <true/>
+       <key>com.apple.security.cs.disable-library-validation</key>
+       <true/>
+       ...
+     </dict>
+  - signing for com.apple.security.cs.debugger:
+     codesign -f -s --entitlements <entitlements> --options \
+     <options> ./<executable>
+- re-signing user binaries with get-task-allow (to permit
+  calling task_for_pid)
+  - codesign -f -s --entitlements <entitlements> \
+    <executable> exec <executable>
+- checkpoint/restore process:
+  - coordinator has cs.debugger privileges + signed entitlements
+  - launch signs target executable with get-task-allow
+  checkpoint:
+    task_port <- task_for_pid()
+    
+    for thread in task:
+      thread_suspend()
+      regs <- thread_get_state(ARM_THREAD_STATE64)
+    
+    mach_vm_region_recurse()
+    checkpoint-file <- mach_vm_read()
+    walk fp:
+      read lr
+      xpaci
+      ptrauth_sign_unauthenticated
+    save to checkpoint file
+    thread_resume()
+
+  restart:
+    fork()
+    mach_vm_allocate()
+
+    for thread in task:
+      thread_create()
+      walk fp:
+        re-sign lr
+      thread_set_state(ARM_THREAD_STATE64, regs)
+      thread_resume()
+
+- SIP policies on macOS:
+  - ALLOW_TASK_FOR_PID
+    - whether task_for_pid can be used to attach to processes without
+      get-task-allow enabled
+    - with SIP enabled, root privileges do not imply being able to call
+      task_for_pid if a process is protected
+    - without SIP, root can call task_for_pid on any process
+    - csrutil enable --without debug allows the checkpoint coordinator
+      to call task_for_pid attach to processes without get-task-allow
+  - ALLOW_UNRESTRICTED_FS
+    - protects /System, /usr, /bin, and /sbin files from modification
+    - for checkpointing a system binary (e.g. /usr/bin/python3), the
+      binary can not be modified directly with get-task-allow
+
+- Disabling SIP:
+  - checkpoint coordinator is compiled as arm64, system libraries are
+    compiled as arm64e
+  - to test checkpointing an arm64e binary, SIP must be disabled and
+    the NVRAM flag must be set, otherwise, PAC/AUT instructions will
+    be nops
+  - for testing PAC compatibility:
+    - allow task_for_pid capabilities
+       csrutil enable --without debug
+    - set NVRAM flag
+       sudo nvram boot-args=-arm64e_preview_abi
+
+SCTLR_EL1
+ - system register holding EnIA, EnIB, EnDA, EnDB (instruction A key,
+   instruction B key, data A key, data B, key)
+ - reconfigured when context switching from arm64 to arm64e process
+
+Re-signing target binary's pointers:
+ - using ptrauth_sign_unauthenticated from within the coordinator 
+   process will not work due to the per/process signing key being
+   different
+ - thread_set_state re-signs a pointer with the target's key but only
+   handles the lr register
+ - re-signing keys (walking stack frame and calling pacibsp on each lr)
+   must occur within the target process the ensure usage of the correct
+   key for signing
+
+- Alternative to task_for_pid, cs.debugger, get-task-allow
+  - use DYLD_INSERT_LIBRARIES to load checkpoint shared library into
+    target process
+    - only issue would be constraints against library injection
+  - entitlements for shared library architecture:
+    <dict>
+     <key>com.apple.security.cs.disable-library-validation</key>
+     <true/>
+     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+     <true/>
+    </dict>
+  - disable-library-validation allows for DYLD_INSERT_LIBRARIES to
+    inject a runtime library into a target process
+  - allow-unsigned-executable-memory allows the shared library map
+    in memory regions on restart
+  - with shared library model, the checkpoint coordinator will not
+    require elevated privileges
+  - the target binary must be resigned with disable-library-validation
+    and allow-unsigned-executable-memory, and load in the shared library
+    before executing the target process
+
+- Shared library responsibilities:
+  - checkpoint
+    - saving memory regions
+      - mach_task_self: descriptor referring to current process
+      - mach_vm_region_recurse: enumerates over all memory regions  
+      - special regions/regions to skip on macOS:
+        - NO VM_PROT_READ (guard pages)
+        - VM_MEMORY_SHARED_PMAP (shared cache, restored by dyld)
+        - VM_MEMORY_DYLIB (shared region)
+        - VM_MEMORY_STACK (exclude stack guard pages but not live stack)
+        - VM_MEMORY_REALLOC (kernel-managed memory)
+        - dlyd shared cache (libSystem, libc++, i.e. runtime libraries)
+           
+           size_t cache_size;
+           void *base = _dyld_get_shared_cache_range(&cache_size)
+           if (addr >= base && addr < base + cache_size)
+                   return 1; // is dyld shared cache region
+           else
+                   return 0;
+      
+      - restoring memory regions:
+         mach_vm_allocate: analagous to mmap
+         mach_vm_protect: analagous to mprotect
+         VM_FLAGS_FIXED: analagous to mmap(..., MAP_FIXED, ...)
+         VM_FLAG_OVERWRITE:
+          - allows memory mapping to overwrite exisiting segments,
+            i.e. restart process stack, heap, etc.
+
+    - saving/restoring register contexts:
+      - hand-write getcontext(), setcontext() replacements due to issues
+        with these sys calls in libSystem or libc using pacibsp, retab,
+        etc.
+      - assembly implementation uses ret (no authentication) and omits
+        using retab/autibsp/autib (authentication + branch) instructions
+      - ucontext_t values will not be pointer authenticated and are
+        managed explicitly
+
+aarch64 registers:
+  x0-x7        general purpose, used for arguments, return values
+  x8           syscall number
+  x9-x15       general purpose, used for temporary data storage
+  x16-x17      temporary registers, scratch
+  x18          platform register, platform-specific use cases
+  x19-x28      callee-saved registers
+  x29 (fp)     frame pointer, points to start of stack frame
+  x30 (lr)     link register, hold return address
+  sp           stack pointer, points to top of stack
+  pc           program counter, holds next instruction address
+
+- Strip PAC from return addresses before writing to checkpoint file:
+    u64 *fp = (u64 *)ctx->fp;
+    while (fp) {
+            u64 *saved_lr = fp + 1;     // saved lr on stack
+            u64 signed_lr = *saved_lr;  // get the value (signed)
+
+            u64 raw_lr;                 // assign with raw lr value
+            __asm__ volatile(
+                "mov    x9, %1  \n"     // x9 = signed lr
+                "xpaci  x9      \n"     // strip PAC
+                "mov    %0, x9  \n"     // raw_lr = x9
+                : "=r"(raw_lr)
+                : "r"(signed_lr)
+                : "x9"
+            );
+
+            *saved_lr = raw_lr;         // saved the un-signed lr
+            fp = (u64 *)fp[0];          // advance to next frame
+    }
+
+- Re-sign saved return addresses before restoring memory:
+    u64 *fp = (u64 *)ctx->fp;
+    while (fp) {
+            u64 *saved_lr = fp + 1;
+            u64 raw_lr    = *saved_lr;
+            
+            // modifier is the stack pointer
+            u64 modifier  = (u64)fp + 16;
+            u64 signed_lr;
+
+            __asm__ volatile(
+                "mov    x9, %1  \n"     // x9 = raw lr
+                "mov    x10, %2 \n"     // x10 = modifier
+                "pacib  x9, x10 \n"     // sign raw lr with IB key
+                "mov    %0, x9  \n"     // signed lr = x9
+                : "=r"(signed_lr)
+                : "r"(raw_lr), "r"(modifier)
+                : "x9", "x10"
+            );
+
+            *saved_lr = signed_lr;
+            fp = (u64 *)fp[0];
+    }   

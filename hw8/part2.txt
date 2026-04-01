@@ -343,6 +343,6 @@ before one thread completes the first. The result of this schedule
 is that now thread 1 and 2 are waiting on the semaphore, but because
 thread 3 has exited, no other thread will ever call mybarrier() and
 thus call sem_post(&sem). Hence, this situation is deadlock; two
-threads are blocked waiting two acquire a semaphore and there are
+threads are blocked waiting to acquire a semaphore and there are
 no pending calls to sem_post(&sem) at this time in the program,
 so no progress can be made.

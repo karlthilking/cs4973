@@ -1,0 +1,126 @@
+CS4973 HW8 Part 2 (Concurrency Bug Detection)
+
+Part A:
+The concurrency bug in the producer-consumer program originates
+from the logic of block() in partial-solution.c. The error is one
+of livelock, where certain threads should be able to proceed, but
+continue to spin in block() and do not make progress.
+
+In partial-solution.c, the implementation of sem_wait decrements
+the internal sempahore count and blocks the thread that called
+sem_wait if after decrementing, the count is less than 0. This is
+in accordance with the logic of a semaphore counter, where a
+count > 0 is the number of calls that can be made to sem_wait w/o
+blocking, and a count < 0 is the number of waiting threads.
+However, the livelock issue arises in the implementation of block()
+which is called in sem_wait when count < 0.
+
+In block(), a thread spins in a loop which continues to check
+the internal counter of the semaphore and only returns if the count
+is >= 0. However, this implementation can cause livelock to occur.
+As an example, consider a binary semaphore and 3 threads that wish
+to use it for mutual exclusion. The following trace causes two
+threads to end up in livelock.
+
+sem_init(&sem, 0, 1); // binary semaphore
+
+        Thread 1        |      Thread 2        |      Thread 3
+     sem_wait(&sem);
+  (now sem->count == 0)
+                            sem_wait(&sem);
+                         sem->count == -1, so
+                        thread 2 enters block()
+                                                  sem_wait(&sem);
+                                                sem->count == -2,
+                                                thread 3 enters
+                                                     block()
+     sem_post(&sem);
+  (now sem->count == -1)
+                        
+                         spinning in block()
+                         until count >= 0
+                                                spinning in block()
+                                                until count >= 0
+
+Threads 2 and 3 continuously spin in a while loop checking if the
+semaphores internal counter is now >= 0 which will never happen.
+Either thread 2 or thread 3 should be able to acquire the semaphore,
+but the logic of block does not allow either thread to make progress,
+so they are stuck in livelock.
+
+Part B:
+The concurrency bug in parent-child-tasks.c is one of ordering.
+The parent work loop assumes that the child runs first and is able
+to set idx=INITIALIZE and length=100 (the desired buffer length),
+before the parent is able to execute and allocate the buffer.
+
+However, the code in this program does not enforce this
+assumption of ordering. It is possible that, with an unlucky
+schedule, the parent will enter its work loop before the child
+initializes the idx and length variables. In the case where the
+parent executes first, the parent will see that idx==INITIALIZE,
+because the global variable idx is intialized with the value
+of the macro INITIALIZE (-1), and the parent will allocate a buffer
+using length variable which is set to -1, causing -1 to be
+implicitly cast to a very large unsigned integer when passed
+as an argument to malloc().
+
+After attempting to allocate a buffer that is likely multiple
+terabytes in size, a segmentation fault is likely to occur very
+soon. Although virtual memory can exceed physical memory by
+swapping out pages and swapping in pages on demand, it would be
+unreasonble for the operating system to logic with the allocation
+request made by the parent-child-tasks process in the case of an 
+ordering error, so the process will be killed with SIGSEGV.
+
+Executing parent-child-tasks with mcmini shows that there is
+a potential for SEGFAULT:
+
+traceID 0 stopped early!
+  (possible SEGFAULT, assert failure, or exit with failure
+   between thread operations)
+
+Part of the trace from mcmini which confirms the problem occurs
+when the parent executes first (the parent executes all instructions
+up until it calls sem_wait):
+
+  4. thread 0: pthread_create(thr:1, _, _, _)
+  5. thread 0: sem_post(sem:1)
+  6. thread 0: sem_wait(sem:2) (awake -> asleep)
+  7. thread 1: starts
+  8. thread 1: sem_wait(sem:1) (awake -> asleep)
+
+Part C:
+The concurrency bug in two-threads-and-mutex is a deadlock bug.
+Both threads acquire two mutexes within their work loop, but
+the order in which they acquire the mutexes is different. The
+problem that this can cause it that thread1 could acquire mutex2,
+then thread2 acquires mutex1, and they both block waiting to acquire
+the other mutex that the other holds.
+
+A trace to demonstrate this scenario:
+        Thread 1                |       Thread 2
+     lock(&mutex2);        
+  (acquires succesfully)
+                                     lock(&mutex1);
+                                   (acquires successfully)
+      lock(&mutex1);
+        (blocks)
+                                     lock(&mutex2);
+                                        (blocks)
+
+Now both threads are blocked, but the mutexes that each is trying
+to acquire is held by the other thread, so this scenario is one
+of deadlock; No progress will be made and the program will hang.
+
+Running the program using mcmini declares that deadlock is present
+and demonstrates the same trace:
+ * thread 0: pthread_join(thr:1, _) [ Blocked ]
+   thread 1: pthread_mutex_lock(mut:1) [ Blocked ]
+   thread 2: pthread_mutex_lock(mut:2) [ Blocked ]
+
+Part D:
+
+
+
+Part E:

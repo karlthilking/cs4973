@@ -1,6 +1,7 @@
 CS4973 HW8 Part 2 (Concurrency Bug Detection)
 
-Part A:
+PART A (producer-consumer):
+
 The concurrency bug in the producer-consumer program originates
 from the logic of block() in partial-solution.c. The error is one
 of livelock, where certain threads should be able to proceed, but
@@ -48,7 +49,8 @@ Either thread 2 or thread 3 should be able to acquire the semaphore,
 but the logic of block does not allow either thread to make progress,
 so they are stuck in livelock.
 
-Part B:
+PART B (parent-child-tasks):
+
 The concurrency bug in parent-child-tasks.c is one of ordering.
 The parent work loop assumes that the child runs first and is able
 to set idx=INITIALIZE and length=100 (the desired buffer length),
@@ -90,7 +92,8 @@ up until it calls sem_wait):
   7. thread 1: starts
   8. thread 1: sem_wait(sem:1) (awake -> asleep)
 
-Part C:
+PART C (two-threads-and-mutex):
+
 The concurrency bug in two-threads-and-mutex is a deadlock bug.
 Both threads acquire two mutexes within their work loop, but
 the order in which they acquire the mutexes is different. The
@@ -119,8 +122,227 @@ and demonstrates the same trace:
    thread 1: pthread_mutex_lock(mut:1) [ Blocked ]
    thread 2: pthread_mutex_lock(mut:2) [ Blocked ]
 
-Part D:
+To fix this bug, it would be sufficent to have both threads acquire
+the locks in the same order. This simple fix prevents the scenario
+where both threads can acquire different lock simultaneously, thus
+preventing deadlock.
 
+PART D (reader-writer):
 
+Note: I compiled the reader-writer binary with the macro
+      WRITER_PREFERRED defined, so this analysis assumes the
+      behavior of the program when this macro is defined. Maybe
+      some of my assumptions would not be true with the reader
+      preferred acquire section used instead.
 
-Part E:
+The issue in reader-writer.c is one of deadlock. Demonstrating this
+is the following output from executing the reader-writer binary
+under mcmini:
+
+THREAD PENDING OPERATIONS
+ * thread 0: pthread_join(thr:3, _) [ Blocked ]
+   thread 1: exits [ Done ]
+   thread 2: exits [ Done ]
+   thread 3: pthread_cond_wait(cond:1, mut:1) (asleep -> awake) [ Blocked ] 
+   thread 4: exits [ Done ]
+   thread 5: exits [ Done ]
+   thread 6: pthread_cond_wait(cond:1, mut:1) (asleep -> awake) [ Blocked ]
+END
+
+This program trace shows that threads 1-2 and 4-5 were able to exit,
+but threads 3 and 6 are both in pthread_cond_wait. Because all other
+threads, except for the main thread who is blocked in pthread_join,
+have exited, no thread will ever be able to signal to threads 3 or
+6 to re-check their condition. Thus, threads 3 and 6 will block
+indefinitely in pthread_cond_wait and thread 0, the main thread,
+will block indefinitely in pthread_join. This is exactly the problem
+of deadlock; Threads are blocked by a thread operation that
+depends on a change in state to unblock (in this case a signal or
+broadcast directed to the condition variable and a corresponding
+change in the condition being checked). Thus, no progress can be
+made in this situation.
+
+The cause of deadlock in this program originates from the release
+section of both the reader and writer threads. Due to the use of
+pthread_cond_signal, it is possible that a thread in its release
+section may wake up one thread who immediately calls back into
+pthread_cond_wait because its condition is still unchanged.
+
+There are 3 possible scenarios in any release section:
+
+1) Reader release (and num_active_readers > 0)
+ num_active_readers--;
+ // num_active_readers > 0 i.e. this is not the last reader
+ pthread_cond_signal(&cond);
+
+2) Reader release (and num_active_readers == 0)
+ num_active_readers--;
+ // num_active_readers == 0 i.e. this was the last reader
+ pthread_cond_signal(&cond);
+
+3) Writer release (implying num_active_readers == 0 &&
+                            num_active_writers == 0)
+ num_active_writers--;
+ // num_active_writers == 0 && num_active_readers == 0
+ pthread_cond_signal(&cond);
+
+In scenario 1, when a reader enters its release section, decrements
+num_active_readers, but num_active_readers is still g.t. 0, a
+subsequent signal to a writer would result in no change. This is
+because a writer will re-check their condition and see that
+num_active_readers == True and go back into pthread_cond_wait.
+Additionally, with a writer-preferred acquire section for readers,
+it is possible that readers could also be waiting on the condition
+variable if num_waiting_writers > 0 was true. This implies that
+a pthread_cond_signal sent to a reader would also cause no change
+because a reader would see num_waiting_writers > 0 == True and go
+back into pthread_cond_wait.
+
+In scenario 2, when the reader decrements num_active_readers it will
+be equal to 0. It is also implied that because the reader is not
+done releasing, that num_active_writers == 0. If the exiting reader
+then signals to a writer, the writer will check the condition:
+(num_active_readers > 0 || num_active_writers > 0) and see that it
+is now false, so it will be able to proceed. However, if the signal
+is instead sent to a reader, the reader will check the condition:
+(num_active_writers > 0 || num_waiting_writers > 0). If a writer
+is waiting, this means that the reader's condition is not yet false
+so it will go back into pthread_cond_wait, but additionally, the
+waiting writer will not be able to wakeup because it did not
+receive any signal.
+
+In scenario 3, a writer enters the release section. Any writer must
+have exclusive access to the resource so it is implied that:
+(num_active_writers == 0 && num_active_readers == 0), after the
+writer decrements num_active_writers in its release section. This
+means that it would be okay for a writer to receive a signal, but
+there could be an issue if a reader receives the signal but it
+can not proceed because there is one or more waiting writers, i.e.
+(num_active_writers > 0 || num_waiting_writers > 0) == True.
+
+This deadlock issue could be fixed by changing pthread_cond_signal
+to pthread_cond_broadcast, guaranteeing that any thread whose
+condition is now satisfied will be able to unblock and begin making
+progress, whereas before, signalling to the condition variable
+would not guarantee that the thread woken up would actually be able
+to progress.
+
+Another fix would be using two condition variables and more precise
+logic in the release section of the reader and writer threads.
+For example, the following could prevent deadlock:
+
+- Reader release section:
+
+   pthread_mutex_lock(&mut);
+   num_active_readers--;
+   if (num_active_readers == 0 && num_waiting_writers)
+           pthread_cond_signal(&cond_writer);
+   pthread_mutex_unlock(&mut);
+
+- Writer release section:
+   
+   pthread_mutex_lock(&mut);
+   num_active_writers--;
+   if (num_waiting_writers)
+           pthread_cond_signal(&cond_writer);
+   else
+           pthread_cond_broadcast(&cond_reader);
+
+These release sections use two different waiting rooms for readers
+and writers by having two condition variables, cond_reader and
+cond_writer. Thus, any reader or writer entering their release
+section can have precise control over if readers and writers should
+be woken up and whether to signal or broadcast, depending on the
+exact situation. Thus, it is ensured that any signal or broadcast
+is sent in a state where the thread(s) being woken up are actually
+able to proceed (according to the logic of their acquire section).
+
+PART E (barrier):
+
+The concurrency bug in barrier.c originates from the implementation
+of the function barrier(). The issue that arises can be described
+by the following trace:
+
+            Thread 1            |         Thread 2
+          barrier(self);
+            lock(&mut);
+         barrier[self] = 1
+           unlock(&mut);
+            lock(&mut);
+         while (condition) {}
+                                         barrier(self);
+                                           lock(&mut);
+
+In this thread trace, thread 1 acquired the lock in order to set
+its index (self) in the barrier to 1 and then released the lock.
+Before thread 2 ran, thread 1 also proceeds to re-acquire the mutex
+and spin in a while loop than will not exit while thread 2 has not
+set its index in the barrier to 1. However, thread 2 is not able
+to set its index in the barrier because it is waiting to acquire
+the lock held by thread 1 who is spinning. This situation poses
+a hybrid between deadlock and livelock because thread 2 is blocked
+(waiting to acquire a mutex), and thread 1 is also stuck, but not
+by a blocking operation (thread 1 is spinning indefinitely in a 
+while loop).
+
+PART F (barrier-sem):
+
+Executing barrier-sem under mcmini shows the follow trace describing
+a situation of deadlock:
+ * thread 0: pthread_join(thr:2, _) [ Blocked ]
+   thread 1: exits [ Done ]
+   thread 2: sem_wait(sem:1) (asleep -> awake) [ Blocked ]
+   thread 3: sem_wait(sem:1) (asleep -> awake) [ Blocked ]
+
+The deadlock issue with this semaphore-based implementation of a 
+barrier is that there is no logic to enforce that all threads
+depart from the barrier before another thread starts a new phase.
+For a simple scenario where there are 3 threads and 2 barrier
+synchronizations, 1 thread could complete two phases before another
+thread completes its 1st phase. In this case, 1 thread has exited
+and 2 threads will block indefinitely in sem_wait().
+
+Trace of this scenario:
+
+       Thread 1       |       Thread 2       |       Thread 3
+     mybarrier()
+   in_barrier++ (1)
+                            my_barrier()           my_barrier()
+                           in_barrier++ (2)
+                                                 in_barrier++ (3)
+                                                last_thread = True
+                                                 sem_post(&sem) x2
+                                                  (sem->count=2)
+                                                 in_barrier-- (2)
+                                                      return
+                            sem_wait(&sem)
+                           (sem->count = 1,
+                          returns immediately)
+                           in_barrier-- (1)
+                                return
+                                                   my_barrier()
+                                                 in_barrier++ (2)
+                                                  sem_wait(&sem)
+                                                 (sem->count = 0,
+                                                return immediately)
+                                                 in_barrier-- (1)
+                                                     return
+  (still in phase 1)                                 exit()
+    sem_wait(&sem)
+(blocks, sem->count = -1)
+                        
+                           my_barrier()
+                         in_barrier++ (2)
+                           sem_wait(&sem)
+                     (blocks, sem->count = -2)
+
+This thread trace demonstrates that even in a simple scenario with
+two phases of synchronization using the barrier implementation, it
+is possible for one thread to fast forward and complete two phases
+before one thread completes the first. The result of this schedule
+is that now thread 1 and 2 are waiting on the semaphore, but because
+thread 3 has exited, no other thread will ever call mybarrier() and
+thus call sem_post(&sem). Hence, this situation is deadlock; two
+threads are blocked waiting two acquire a semaphore and there are
+no pending calls to sem_post(&sem) at this time in the program,
+so no progress can be made.
